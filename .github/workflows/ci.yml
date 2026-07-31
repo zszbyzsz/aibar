@@ -17,3 +17,17 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
+
+  validate-cask:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Homebrew Cask
+        run: |
+          brew info --json=v2 --cask ./Casks/aibar.rb |
+            ruby -rjson -e '
+              requirement = JSON.parse($stdin.read).dig("casks", 0, "depends_on", "macos")
+              expected = {">=" => ["13"]}
+              abort "expected #{expected.inspect}, got #{requirement.inspect}" unless requirement == expected
+            '
+          brew audit --cask --strict Casks/aibar.rb

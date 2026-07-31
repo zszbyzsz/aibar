@@ -4,7 +4,7 @@
 
 一个为 macOS 设计的本地 AI 使用情况仪表盘。aibar 把 Codex 的本地会话记录、配额和活动状态收进刘海下方与状态栏：需要时展开查看，不需要时保持安静。
 
-> 版本 0.1.6 · macOS 13 Ventura 或更高版本 · Apple Silicon
+> 版本 0.1.7 · macOS 13 Ventura 或更高版本 · Apple Silicon
 
 ![aibar dashboard](docs/images/dashboard-en.png)
 
@@ -33,6 +33,22 @@ brew tap zszbyzsz/aibar https://github.com/zszbyzsz/aibar.git
 brew install --cask aibar
 ```
 
+若 Homebrew 同时报出其他 Cask（例如 `gcloud-cli` 或 `libreoffice`）不可读，通常是
+Homebrew 程序与 Cask API 元数据版本不一致，并非 aibar 的依赖。请先把 Homebrew 的
+`ORIGIN` 恢复为官方仓库并修复这些 Cask，再重试安装：
+
+```bash
+git -C "$(brew --repository)" remote set-url origin https://github.com/Homebrew/brew
+brew update-reset "$(brew --repository)"
+brew update
+brew reinstall --cask gcloud-cli libreoffice
+brew install --cask aibar
+```
+
+可用 `brew config` 确认 `ORIGIN` 与 Homebrew 版本；若你有意使用第三方镜像，请确保
+它同步的是完整且与当前 Cask API 兼容的 Homebrew 版本。`brew update-reset` 会重置
+Homebrew 主仓库中的本地提交和未提交修改；若你维护过这些修改，请先备份。
+
 更新：
 
 ```bash
@@ -42,7 +58,7 @@ brew upgrade --cask aibar
 
 #### 直接下载安装包
 
-在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.6.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
+在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.7.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
 
 请使用同一 Developer ID 签名的正式发布版，以便自动更新后保持屏幕录制授权。若 macOS 阻止首次启动，请在 Finder 中按住 Control 点击应用并选择“打开”；若仍被隔离，可执行：
 
@@ -125,6 +141,25 @@ brew tap zszbyzsz/aibar https://github.com/zszbyzsz/aibar.git
 brew install --cask aibar
 ```
 
+If Homebrew also reports unrelated casks (for example, `gcloud-cli` or
+`libreoffice`) as unreadable, its program and Cask API metadata are usually out
+of sync; those casks are not aibar dependencies. Restore Homebrew's official
+upstream and repair the affected casks before retrying:
+
+```bash
+git -C "$(brew --repository)" remote set-url origin https://github.com/Homebrew/brew
+brew update-reset "$(brew --repository)"
+brew update
+brew reinstall --cask gcloud-cli libreoffice
+brew install --cask aibar
+```
+
+Use `brew config` to verify the `ORIGIN` and Homebrew version. If you
+intentionally use a third-party mirror, ensure it provides a complete Homebrew
+version compatible with the current Cask API. `brew update-reset` discards
+local committed and uncommitted changes in the Homebrew repository, so preserve
+any intentional changes first.
+
 To update:
 
 ```bash
@@ -134,7 +169,7 @@ brew upgrade --cask aibar
 
 #### Download the app
 
-Download `aibar-0.1.6.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
+Download `aibar-0.1.7.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
 
 Use a release signed consistently with the same Developer ID to preserve Screen Recording consent through automatic updates. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. If it remains quarantined:
 
