@@ -20,6 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 store: usageStore,
                 presentActivity: { [weak self] in
                     self?.activityStatusBarController?.presentFromQuotaReadout() ?? false
+                },
+                dismissActivity: { [weak self] in
+                    self?.activityStatusBarController?.dismissQuotaReadoutPresentation()
                 }
             )
             activityStatusBarController?.onQuotaPresentationCollapsed = { [weak self] in

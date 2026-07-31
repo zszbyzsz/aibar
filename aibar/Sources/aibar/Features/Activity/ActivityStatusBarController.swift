@@ -561,24 +561,28 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// Expands the activity stack after the pointer enters a side quota
     /// readout. The caller hides its readouts only when this returns true, so
     /// an empty or disabled capsule never leaves the user with no UI at all.
+    ///
+    /// This deliberately stays open while the pointer remains in a side
+    /// readout. The readout controller keeps an invisible tracking surface in
+    /// that location, so removing its visible pixels does not turn a stationary
+    /// cursor into a repeated enter/leave loop.
     func presentFromQuotaReadout() -> Bool {
         guard isEnabled, !rows.isEmpty, !isScreenshotSuppressed else { return false }
         presentedFromQuotaReadout = true
         setListHovering(true)
-
-        // The pointer normally travels straight down into the capsule. If it
-        // does not arrive, fold the temporary presentation back up promptly;
-        // `setListHovering(true)` from the capsule cancels this hand-off.
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, self.presentedFromQuotaReadout else { return }
-            withAnimation(.notchSpring) { self.isExpanded = false }
-            self.resizeForCurrentContent()
-            self.restartPollTimer(interval: Self.pollIntervalCollapsed)
-            self.finishQuotaPresentationIfNeeded()
-        }
-        collapseWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
         return true
+    }
+
+    /// The pointer left the side quota readout. Reuse the normal capsule
+    /// leave path so its grace period still permits a smooth hand-off into
+    /// the stack directly below the notch.
+    func dismissQuotaReadoutPresentation() {
+        guard presentedFromQuotaReadout else { return }
+        guard isExpanded else {
+            finishQuotaPresentationIfNeeded()
+            return
+        }
+        setListHovering(false)
     }
 
     private func finishQuotaPresentationIfNeeded() {

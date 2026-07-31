@@ -9,10 +9,17 @@ import Combine
 final class QuotaStatusBarController: NSObject {
     private let store: UsageStore
     private let presentActivity: () -> Bool
+    private let dismissActivity: () -> Void
     private let leftPanel: NSPanel
     private let rightPanel: NSPanel
     private var quotaSubscription: AnyCancellable?
     private var readoutsVisible = true
+    /// While activity is presented from a side readout, its panel remains on
+    /// screen but transparent. That preserves the side's tracking area so a
+    /// stationary cursor cannot repeatedly re-enter when the readout is
+    /// restored.
+    private var isPresentingActivity = false
+    private var hoveringSides: Set<QuotaSideReadoutView.Side> = []
     private var isScreenshotSuppressed = false
 
     /// Just enough room for a two-digit readout. Keeping these wings narrow
@@ -25,21 +32,26 @@ final class QuotaStatusBarController: NSObject {
     private static let notchInset: CGFloat = 10
     private static let fallbackSize = CGSize(width: 170, height: 34)
 
-    init(store: UsageStore, presentActivity: @escaping () -> Bool) {
+    init(
+        store: UsageStore,
+        presentActivity: @escaping () -> Bool,
+        dismissActivity: @escaping () -> Void
+    ) {
         self.store = store
         self.presentActivity = presentActivity
+        self.dismissActivity = dismissActivity
         leftPanel = Self.makePanel()
         rightPanel = Self.makePanel()
         super.init()
 
         leftPanel.contentView = NSHostingView(
-            rootView: QuotaSideReadoutView(store: store, side: .left) { [weak self] in
-                self?.showActivityStatus()
+            rootView: QuotaSideReadoutView(store: store, side: .left) { [weak self] side, hovering in
+                self?.setSideHovering(side, hovering: hovering)
             }
         )
         rightPanel.contentView = NSHostingView(
-            rootView: QuotaSideReadoutView(store: store, side: .right) { [weak self] in
-                self?.showActivityStatus()
+            rootView: QuotaSideReadoutView(store: store, side: .right) { [weak self] side, hovering in
+                self?.setSideHovering(side, hovering: hovering)
             }
         )
         reposition()
@@ -62,7 +74,10 @@ final class QuotaStatusBarController: NSObject {
     /// expanded. Screenshot suppression always wins over this request.
     func showReadouts() {
         guard !isScreenshotSuppressed else { return }
+        isPresentingActivity = false
         readoutsVisible = true
+        leftPanel.alphaValue = 1
+        rightPanel.alphaValue = 1
         reposition()
         updatePanelVisibility()
     }
@@ -77,21 +92,44 @@ final class QuotaStatusBarController: NSObject {
         }
     }
 
-    private func showActivityStatus() {
-        guard readoutsVisible, !isScreenshotSuppressed, presentActivity() else { return }
-        hideReadouts()
+    private func setSideHovering(_ side: QuotaSideReadoutView.Side, hovering: Bool) {
+        guard !isScreenshotSuppressed else { return }
+        if hovering {
+            hoveringSides.insert(side)
+            guard presentActivity() else { return }
+            isPresentingActivity = true
+            hideReadouts(keepingTracking: true)
+        } else {
+            hoveringSides.remove(side)
+            guard isPresentingActivity, hoveringSides.isEmpty else { return }
+            dismissActivity()
+        }
     }
 
-    private func hideReadouts() {
+    private func hideReadouts(keepingTracking: Bool = false) {
         readoutsVisible = false
-        leftPanel.orderOut(nil)
-        rightPanel.orderOut(nil)
+        if keepingTracking {
+            // `orderOut` destroys the hover target. Keeping a fully
+            // transparent panel ordered makes the side readout and activity
+            // stack mutually exclusive without causing hover churn.
+            leftPanel.alphaValue = 0
+            rightPanel.alphaValue = 0
+            leftPanel.orderFrontRegardless()
+            rightPanel.orderFrontRegardless()
+        } else {
+            leftPanel.orderOut(nil)
+            rightPanel.orderOut(nil)
+        }
     }
 
     /// A quota that Codex did not provide should take up no space at all. In
     /// particular, newer Pro snapshots may contain only the weekly window and
     /// omit the five-hour one altogether.
     private func updatePanelVisibility() {
+        if isPresentingActivity, !isScreenshotSuppressed {
+            hideReadouts(keepingTracking: true)
+            return
+        }
         guard readoutsVisible, !isScreenshotSuppressed else {
             leftPanel.orderOut(nil)
             rightPanel.orderOut(nil)
@@ -103,6 +141,7 @@ final class QuotaStatusBarController: NSObject {
 
     private func update(panel: NSPanel, hasQuota: Bool) {
         if hasQuota {
+            panel.alphaValue = 1
             panel.orderFrontRegardless()
         } else {
             panel.orderOut(nil)
@@ -145,14 +184,14 @@ final class QuotaStatusBarController: NSObject {
 }
 
 private struct QuotaSideReadoutView: View {
-    enum Side {
+    enum Side: Hashable {
         case left
         case right
     }
 
     @ObservedObject var store: UsageStore
     let side: Side
-    let onEnter: () -> Void
+    let onHover: (Side, Bool) -> Void
 
     private var remainingPercent: Int? {
         let limit: LimitView?
@@ -227,7 +266,7 @@ private struct QuotaSideReadoutView: View {
         .clipShape(tabShape)
         .contentShape(Rectangle())
         .onHover { hovering in
-            if hovering { onEnter() }
+            onHover(side, hovering)
         }
         .accessibilityLabel(accessibilityLabel)
     }
