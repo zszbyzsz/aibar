@@ -72,6 +72,11 @@ final class UsageStore: ObservableObject {
     /// is a floor under how often refreshRemoteQuotaOnVisit() will actually
     /// hit the network, independent of how often the caller asks.
     private static let claudeOAuthMinInterval: TimeInterval = 60
+    /// Snapshot of earned Codex Full reset credits. Kept outside `payload` so
+    /// a fast local transcript refresh cannot briefly erase remote metadata.
+    private var codexResetCredits: RateLimitResetCredits?
+    private var lastCodexResetCreditsFetch: Date?
+    private static let codexResetCreditsMinInterval: TimeInterval = 5 * 60
 
     init() {
         demoMode = CommandLine.arguments.contains("--demo")
@@ -90,6 +95,7 @@ final class UsageStore: ObservableObject {
         // data wait for it: `refresh(eagerly:)` publishes a fallback-priced
         // scan first and replaces it as soon as the live rates arrive.
         Task { await refresh(eagerly: true) }
+        refreshCodexResetCreditsIfNeeded()
         timer = Timer.scheduledTimer(withTimeInterval: Self.refreshInterval, repeats: true) { [weak self] _ in
             Task { await self?.refresh() }
         }
@@ -237,6 +243,7 @@ final class UsageStore: ObservableObject {
         result.0.pricingRates = prices
         result.0.subscriptionPlan = result.1?.planType
         result.0.subscriptionActiveUntil = result.1?.activeUntil
+        result.0.rateLimitResetCredits = codexResetCredits
         return result.0
     }
 
@@ -247,6 +254,10 @@ final class UsageStore: ObservableObject {
     /// 429s aggressively server-side.
     func refreshRemoteQuotaOnVisit() {
         guard !demoMode else { return }
+        if provider == .codex {
+            refreshCodexResetCreditsIfNeeded()
+            return
+        }
         guard provider == .claudeCode else { return }
         if let last = lastClaudeOAuthFetch, Date().timeIntervalSince(last) < Self.claudeOAuthMinInterval { return }
         lastClaudeOAuthFetch = Date()
@@ -257,6 +268,23 @@ final class UsageStore: ObservableObject {
             payload.session = result.session
             payload.weekly = result.weekly
             payload.weeklyKind = result.weekly != nil ? "weekly" : nil
+        }
+    }
+
+    /// Uses Codex's own authenticated app-server process. No credential data
+    /// crosses into aibar; only the returned count and expiry timestamp do.
+    private func refreshCodexResetCreditsIfNeeded() {
+        guard provider == .codex else { return }
+        if let last = lastCodexResetCreditsFetch,
+           Date().timeIntervalSince(last) < Self.codexResetCreditsMinInterval {
+            return
+        }
+        lastCodexResetCreditsFetch = Date()
+        Task {
+            guard let credits = await CodexAppServerUsage.fetchResetCredits() else { return }
+            codexResetCredits = credits
+            guard provider == .codex else { return }
+            payload.rateLimitResetCredits = credits
         }
     }
 
@@ -328,7 +356,11 @@ final class UsageStore: ObservableObject {
                 "gpt-5.5": ModelPrice(input: 5, cachedInput: 0.5, output: 30, source: "demo", status: "live"),
             ],
             subscriptionPlan: "Pro",
-            subscriptionActiveUntil: calendar.date(byAdding: .day, value: 19, to: now)
+            subscriptionActiveUntil: calendar.date(byAdding: .day, value: 19, to: now),
+            rateLimitResetCredits: RateLimitResetCredits(
+                availableCount: 1,
+                expiresAt: [resetBase + 13 * 86_400]
+            )
         )
     }
 }

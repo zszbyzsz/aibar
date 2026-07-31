@@ -55,6 +55,18 @@ final class FormattingTests: XCTestCase {
         XCTAssertEqual(Formatting.hoursAndMinutes(fromSeconds: -100).minutes, 0)
     }
 
+    func testCompactResetExpiryTimeUsesStableShape() {
+        let utc = TimeZone(secondsFromGMT: 0)!
+        // 2026-08-13 01:26:00 UTC
+        let expiry = DateComponents(
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: utc,
+            year: 2026, month: 8, day: 13, hour: 1, minute: 26
+        ).date!.timeIntervalSince1970
+
+        XCTAssertEqual(Formatting.compactTimeLabel(expiry, timeZone: utc), "01:26")
+    }
+
     func testMoneyLabelFormatsAsTwoDecimalUSD() {
         // The currency symbol/placement follows the run's locale (e.g. "$12.30"
         // vs "US$12.30"), so assert on the numeric content rather than the

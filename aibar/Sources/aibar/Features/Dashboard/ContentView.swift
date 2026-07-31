@@ -29,6 +29,9 @@ struct DashboardView: View {
     private var data: UsagePayload { store.payload }
     private var lang: AppLanguage { store.language }
     private var weeklyLabel: String { L.weeklyLabel(lang, isMonthly: data.weeklyKind == "monthly") }
+    private var usageTimeline: UsageTimeline {
+        UsageTimeline(daily: data.daily, resetCredits: data.rateLimitResetCredits)
+    }
     private var priceStatusLabel: String {
         switch data.priceStatus {
         case "live", "cached": return L.pricingSynced(lang)
@@ -103,12 +106,12 @@ struct DashboardView: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(Color.notchCardFill))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.notchAccent.opacity(0.16), lineWidth: 1))
 
-        SectionCard(title: L.usageOverviewTitle(lang), icon: "chart.bar.fill", trailing: L.peakNd(lang, days: data.daily.count, money: Formatting.moneyLabel(data.daily.map(\.cost).max() ?? 0))) {
+        SectionCard(title: L.usageOverviewTitle(lang), icon: "chart.bar.fill", trailing: L.peakNd(lang, days: UsageTimeline.dayCount, money: Formatting.moneyLabel(usageTimeline.points.map(\.cost).max() ?? 0))) {
             // Session/weekly used to be their own full-width cards up top;
             // they're squeezed down into compact quota blocks here instead,
             // filling the heatmap's right side rather than leaving it blank.
             HStack(alignment: .top, spacing: 16) {
-                UsageChartView(daily: data.daily)
+                UsageChartView(timeline: usageTimeline)
                 Spacer(minLength: 12)
                 VSep()
                 VStack(alignment: .leading, spacing: 16) {

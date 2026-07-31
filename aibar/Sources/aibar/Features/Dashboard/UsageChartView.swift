@@ -5,25 +5,81 @@ private func shortDate(_ isoDate: String) -> String {
     String(isoDate.suffix(5))
 }
 
+/// A fixed-size 90-day window whose right edge advances to the furthest known
+/// Full reset expiry. With no reset it ends today; with an expiry 13 days out,
+/// for example, it naturally shows 76 historical days, today, and 13 future
+/// days. This keeps the grid stable while making expiry dates real positions
+/// on the same calendar rather than detached labels.
+struct UsageTimeline {
+    static let dayCount = 90
+
+    let points: [DailyPoint]
+    let resetExpiriesByDate: [String: [Double]]
+    let todayKey: String
+
+    init(
+        daily: [DailyPoint],
+        resetCredits: RateLimitResetCredits?,
+        now: Date = Date(),
+        calendar requestedCalendar: Calendar = .current
+    ) {
+        var calendar = requestedCalendar
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+
+        func key(for date: Date) -> String { formatter.string(from: date) }
+
+        let today = calendar.startOfDay(for: now)
+        todayKey = key(for: today)
+        let expiries = resetCredits?.expiresAt ?? []
+        let furthestExpiryDay = expiries
+            .map { calendar.startOfDay(for: Date(timeIntervalSince1970: $0)) }
+            .max()
+        let end = max(today, furthestExpiryDay ?? today)
+        let start = calendar.date(byAdding: .day, value: -(Self.dayCount - 1), to: end) ?? end
+        let existing = Dictionary(uniqueKeysWithValues: daily.map { ($0.date, $0) })
+
+        points = (0..<Self.dayCount).map { offset in
+            let date = calendar.date(byAdding: .day, value: offset, to: start) ?? start
+            let dateKey = key(for: date)
+            return existing[dateKey] ?? DailyPoint(date: dateKey, tokens: 0, cost: 0)
+        }
+
+        var grouped: [String: [Double]] = [:]
+        for expiry in expiries {
+            grouped[key(for: Date(timeIntervalSince1970: expiry)), default: []].append(expiry)
+        }
+        resetExpiriesByDate = grouped.mapValues { $0.sorted() }
+    }
+}
+
 /// GitHub-style calendar heatmap — a bar chart mixes "which day" (x position)
 /// with "how much" (bar height) in a way that takes real scanning; a heatmap
 /// drops position-as-magnitude and encodes intensity as color only, arranged
 /// as full Mon–Sun weeks (oldest week on the left, columns running left to
 /// right) so a week's rhythm reads as a shape at a glance instead of a
-/// sequence of bar heights. Fixed at 7 rows regardless of how many weeks are
-/// shown — width grows with more history instead of height, which is what
+/// sequence of bar heights. Fixed at 7 rows across a dynamic 90-day window —
+/// width grows with more history instead of height, which is what
 /// actually fills the card's row next to the session/weekly rings beside it
 /// rather than just making the card taller. Hovering a cell (still inside the
 /// dashboard's bounds, so it doesn't trigger auto-hide) surfaces the exact
 /// date/cost/tokens, same as the old chart's tooltip.
 struct UsageChartView: View {
-    var daily: [DailyPoint]
+    var timeline: UsageTimeline
     @State private var hovered: DailyPoint?
     @Environment(\.appLanguage) private var lang
 
     private static let cellSize: CGFloat = 18
     private static let cellSpacing: CGFloat = 2
     private static let legendRatios: [Double] = [0, 0.25, 0.5, 0.75, 1.0]
+    private static let resetColor = Color(red: 1.000, green: 0.280, blue: 0.340)
+
+    private var daily: [DailyPoint] { timeline.points }
 
     private static let isoFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -39,9 +95,9 @@ struct UsageChartView: View {
         return (sundayIndexed + 5) % 7
     }
 
-    /// `daily` is always a contiguous run of 30 days (see UsageScanner), so
-    /// this only needs to pad the front with nils to land the first real day
-    /// in its correct weekday column, then chunk into full Mon–Sun weeks.
+    /// The timeline is contiguous, so this only pads the front with nils to
+    /// land its first real day in the correct weekday column, then chunks it
+    /// into full Mon–Sun weeks.
     private var weeks: [[DailyPoint?]] {
         guard let first = daily.first else { return [] }
         var cells: [DailyPoint?] = Array(repeating: nil, count: Self.mondayIndex(first.date))
@@ -62,15 +118,30 @@ struct UsageChartView: View {
         return Color.notchAccent.opacity(0.28 + 0.72 * (point.cost / maxCost))
     }
 
+    private func resetExpiries(for point: DailyPoint?) -> [Double] {
+        guard let point else { return [] }
+        return timeline.resetExpiriesByDate[point.date] ?? []
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 if let hovered {
-                    Text(L.heatmapHover(lang, date: shortDate(hovered.date), cost: Formatting.moneyLabel(hovered.cost), tokens: Formatting.tokenLabel(hovered.tokens)))
+                    let expiries = resetExpiries(for: hovered)
+                    Text(
+                        expiries.isEmpty
+                            ? L.heatmapHover(lang, date: shortDate(hovered.date), cost: Formatting.moneyLabel(hovered.cost), tokens: Formatting.tokenLabel(hovered.tokens))
+                            : L.heatmapResetHover(
+                                lang,
+                                date: shortDate(hovered.date),
+                                count: expiries.count,
+                                times: expiries.map { Formatting.compactTimeLabel($0) }.joined(separator: ", ")
+                            )
+                    )
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.notchAccent)
+                        .foregroundStyle(expiries.isEmpty ? Color.notchAccent : Self.resetColor)
                 } else {
-                    Text(L.heatmapHint(lang, days: daily.count))
+                    Text(L.heatmapTimelineHint(lang, days: daily.count))
                         .font(.system(size: 10))
                         .foregroundStyle(Color.notchMutedInk)
                 }
@@ -96,12 +167,29 @@ struct UsageChartView: View {
                         VStack(spacing: Self.cellSpacing) {
                             ForEach(0..<7, id: \.self) { row in
                                 let point = weeks[col][row]
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(cellColor(point))
+                                let expiries = resetExpiries(for: point)
+                                let isToday = point?.date == timeline.todayKey
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(cellColor(point))
+                                    if !expiries.isEmpty {
+                                        Circle()
+                                            .fill(Self.resetColor)
+                                            .frame(width: Self.cellSize - 2, height: Self.cellSize - 2)
+                                        Image(systemName: "arrow.counterclockwise")
+                                            .font(.system(size: 8, weight: .heavy))
+                                            .foregroundStyle(Color.white)
+                                    }
+                                }
                                     .frame(width: Self.cellSize, height: Self.cellSize)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 4)
-                                            .stroke(Color.notchAccent, lineWidth: point != nil && point?.id == hovered?.id ? 1.5 : 0)
+                                            .strokeBorder(
+                                                isToday
+                                                    ? Color.notchInk
+                                                    : (point != nil && point?.id == hovered?.id ? Color.notchAccent : Color.clear),
+                                                lineWidth: isToday ? 2 : 1.5
+                                            )
                                     )
                                     .onHover { isHovering in
                                         guard let point else { return }
@@ -126,6 +214,15 @@ struct UsageChartView: View {
                         .frame(width: 12, height: 12)
                 }
                 Text(L.more(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
+                Circle()
+                    .fill(Self.resetColor)
+                    .frame(width: 12, height: 12)
+                    .overlay(
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 6, weight: .heavy))
+                            .foregroundStyle(Color.white)
+                    )
+                Text(L.resetExpiryLegend(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
                 if let first = daily.first, let last = daily.last {
                     Text("· \(shortDate(first.date)) – \(shortDate(last.date))")
                         .font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)

@@ -17,6 +17,22 @@ enum L {
     static func heatmapHint(_ lang: AppLanguage, days: Int) -> String {
         lang == .zh ? "近 \(days) 天" : "Last \(days) days"
     }
+    static func heatmapTimelineHint(_ lang: AppLanguage, days: Int) -> String {
+        lang == .zh ? "\(days) 天时间轴 · 方框标记今天" : "\(days)-day timeline · outlined square is today"
+    }
+    static func heatmapResetHover(
+        _ lang: AppLanguage,
+        date: String,
+        count: Int,
+        times: String
+    ) -> String {
+        lang == .zh
+            ? "\(date)：\(count) 次 reset 到期 · \(times)"
+            : "\(date): \(count) reset \(count == 1 ? "expires" : "expire") · \(times)"
+    }
+    static func resetExpiryLegend(_ lang: AppLanguage) -> String {
+        lang == .zh ? "reset 到期" : "Reset expiry"
+    }
     static func less(_ lang: AppLanguage) -> String { lang == .zh ? "少" : "Less" }
     static func more(_ lang: AppLanguage) -> String { lang == .zh ? "多" : "More" }
 

@@ -239,6 +239,16 @@ struct LimitView {
     var resetCount: Int?
 }
 
+/// Earned, manually redeemable Codex rate-limit resets. These are distinct
+/// from a quota window's automatic `resetsAt`: the account may have one or
+/// more Full reset credits, each with its own expiry date.
+struct RateLimitResetCredits: Equatable {
+    var availableCount: Int
+    /// One timestamp per available detail row returned by Codex. The backend
+    /// may expose only `availableCount`, in which case this remains empty.
+    var expiresAt: [Double]
+}
+
 struct UsagePayload {
     var generatedAt: Date = Date()
     var plan: String = "Codex"
@@ -265,5 +275,6 @@ struct UsagePayload {
     var pricingRates: [String: ModelPrice] = [:]
     var subscriptionPlan: String?
     var subscriptionActiveUntil: Date?
+    var rateLimitResetCredits: RateLimitResetCredits?
     var error: String?
 }

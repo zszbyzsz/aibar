@@ -56,6 +56,20 @@ enum Formatting {
         return L.resetsInMinutes(lang, minutes: minutes)
     }
 
+    /// The date itself is encoded by the reset's position in the heatmap; its
+    /// hover detail therefore needs only the local wall-clock time.
+    static func compactTimeLabel(
+        _ timestamp: Double,
+        timeZone: TimeZone = .current
+    ) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: timestamp))
+    }
+
     /// Splits an elapsed-seconds count into hours/minutes — the one place
     /// this arithmetic lives, shared by every compact duration label instead
     /// of each call site re-deriving `minutes / 60` / `minutes % 60` on its own.
