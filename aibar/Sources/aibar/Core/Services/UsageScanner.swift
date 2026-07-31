@@ -11,10 +11,14 @@ final class UsageScanner {
         "input_tokens", "cached_input_tokens", "cache_write_input_tokens",
         "output_tokens", "reasoning_output_tokens", "total_tokens",
     ]
-    // Bumped to rebuild every cached summary with the two accuracy fixes in
-    // `process`/`parseSession`: skipping re-emitted `token_count` events, and
-    // back-filling the model for events logged before the first `turn_context`.
-    private static let cacheVersion = 5
+    private static let longContextThreshold = 272_000
+    private static let longContextUsageKeys = [
+        "input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens",
+    ]
+    // Bumped to rebuild every cached summary after tightening `token_count`
+    // deduplication and filtering stale UI-only totals. Version 5 already
+    // back-filled models logged after their first usage event.
+    private static let cacheVersion = 7
 
     init() {
         let home = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
@@ -243,9 +247,36 @@ final class UsageScanner {
         // inflate totals by roughly 1.4%.
         if let running = info["total_token_usage"] as? [String: Any] {
             let snapshot = running.compactMapValues { ($0 as? NSNumber)?.intValue }
-            let alreadyCounted = previousTotalUsage == snapshot
+            let previousSnapshot = previousTotalUsage
+            let sameRunningTotal: Bool
+            if let currentTotal = snapshot["total_tokens"],
+               let previousTotal = previousSnapshot?["total_tokens"] {
+                // `total_tokens` is the authoritative billed-token counter.
+                // Codex occasionally changes another field in the snapshot
+                // while redisplaying the same turn; comparing the whole
+                // dictionary would count that ghost event again.
+                sameRunningTotal = currentTotal == previousTotal
+            } else {
+                // Older records may omit `total_tokens`; retain the broader
+                // snapshot comparison for those schemas.
+                sameRunningTotal = previousSnapshot == snapshot
+            }
             previousTotalUsage = snapshot
-            if alreadyCounted { return }
+            if sameRunningTotal { return }
+
+            // A local transcript can contain a stale UI-only total even though
+            // every measurable token category is zero. The running snapshot
+            // may be zero or inherited from a parent transcript; either way,
+            // the orphaned total is not a model request and must not inflate
+            // the day's token-only total.
+            let hasBillableCategory = [
+                "input_tokens", "cached_input_tokens", "cache_write_input_tokens",
+                "output_tokens", "reasoning_output_tokens",
+            ].contains { ((usage[$0] as? NSNumber)?.intValue ?? 0) != 0 }
+            let lastTotal = (usage["total_tokens"] as? NSNumber)?.intValue ?? 0
+            if lastTotal > 0, !hasBillableCategory {
+                return
+            }
         }
 
         let eventDate = Formatting.parseISODate(latestAt) ?? Date()
@@ -255,6 +286,21 @@ final class UsageScanner {
             totals[key, default: 0] += value
             usageByModel[activeModel, default: [:]][key, default: 0] += value
             dailyUsageByModel[dateKey, default: [:]][activeModel, default: [:]][key, default: 0] += value
+        }
+
+        // API long-context pricing is decided per request, so preserve the
+        // affected slices before aggregation loses the individual event size.
+        // Models without a published long-context tier simply ignore these
+        // auxiliary counters during cost calculation.
+        let eventInput = (usage["input_tokens"] as? NSNumber)?.intValue ?? 0
+        if eventInput > Self.longContextThreshold {
+            for key in Self.longContextUsageKeys {
+                let value = (usage[key] as? NSNumber)?.intValue ?? 0
+                let longKey = "long_context_\(key)"
+                totals[longKey, default: 0] += value
+                usageByModel[activeModel, default: [:]][longKey, default: 0] += value
+                dailyUsageByModel[dateKey, default: [:]][activeModel, default: [:]][longKey, default: 0] += value
+            }
         }
     }
 

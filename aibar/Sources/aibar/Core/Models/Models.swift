@@ -73,15 +73,34 @@ struct ModelPrice: Codable {
     /// normal input rate; GPT-5.6 charges 1.25× input. Anthropic has its own
     /// premium cache-write rate, so this cannot be folded into `input`.
     var cacheWrite: Double
+    /// Some OpenAI models charge higher rates when a single request crosses
+    /// the long-context threshold. Optional so providers without such a tier,
+    /// and older on-disk payloads, retain their ordinary rates.
+    var longContextThreshold: Int?
+    var longInputMultiplier: Double?
+    var longCachedInputMultiplier: Double?
+    var longCacheWriteMultiplier: Double?
+    var longOutputMultiplier: Double?
     var source: String
     var status: String
 
     init(input: Double, cachedInput: Double, output: Double,
-         cacheWrite: Double? = nil, source: String, status: String) {
+         cacheWrite: Double? = nil,
+         longContextThreshold: Int? = nil,
+         longInputMultiplier: Double? = nil,
+         longCachedInputMultiplier: Double? = nil,
+         longCacheWriteMultiplier: Double? = nil,
+         longOutputMultiplier: Double? = nil,
+         source: String, status: String) {
         self.input = input
         self.cachedInput = cachedInput
         self.output = output
         self.cacheWrite = cacheWrite ?? input
+        self.longContextThreshold = longContextThreshold
+        self.longInputMultiplier = longInputMultiplier
+        self.longCachedInputMultiplier = longCachedInputMultiplier
+        self.longCacheWriteMultiplier = longCacheWriteMultiplier
+        self.longOutputMultiplier = longOutputMultiplier
         self.source = source
         self.status = status
     }
@@ -162,18 +181,27 @@ enum CodexActivityState {
 }
 
 /// What a single row of the always-on capsule (`ActivityStatusBarController`)
-/// is showing. Distinct from `CodexActivityState`: a finished run lingers here
-/// as `.completed` for a few seconds (see `ActivityStatusBarController`'s
-/// `completionDisplayDuration`) so the outcome is actually readable before the
-/// pill disappears, rather than vanishing the instant the sound plays.
+/// is showing. Distinct from `CodexActivityState`: a finished run first appears
+/// as a prominent announcement, then lingers at the end of the running list
+/// for up to two minutes so it does not vanish the instant the sound plays.
 enum ActivityCapsuleDisplay: Equatable {
     case active(ProjectActivity)
     case completed(project: String, outcome: ActivityOutcome)
+    case update(AppUpdateNotice)
+}
+
+struct AppUpdateNotice: Equatable {
+    let version: String
+    let releaseURL: URL
+    /// A digest-verified archive pulled into the user's cache, when the
+    /// release supplied checksum metadata. Otherwise the reminder links to
+    /// the release page without downloading an unverified executable.
+    let packageURL: URL?
 }
 
 /// One row in the always-on capsule's stacked list. Collapsed, only the
 /// first row shows; hovering reveals the rest — every currently running
-/// project, plus a just-finished one's outcome pinned to the top. `id` is
+/// project, plus short-lived completion outcomes. `id` is
 /// stable across polls (the thread's key, or a key derived from it for the
 /// completion row) so SwiftUI can animate rows being added, removed, and
 /// reordered instead of just replacing the whole list each time. `Equatable`
@@ -183,7 +211,9 @@ struct CapsuleRow: Identifiable, Equatable {
     let id: String
     /// The thread this row deep-links to on tap (`codex://threads/<id>`) —
     /// whether the row is currently shown as `.active` or `.completed`.
-    let threadID: String
+    /// Update reminders have no Codex thread and use their release/package
+    /// URL action instead.
+    let threadID: String?
     let display: ActivityCapsuleDisplay
 }
 

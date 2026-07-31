@@ -1,6 +1,6 @@
 cask "aibar" do
-  version "0.1.0"
-  sha256 "f59f0ba5fd1a562b6a67a3e1446109859d5aab44543c0a052711619084ba9af8"
+  version "0.1.1"
+  sha256 "7a40aa72a9874d24cafb6e5ef361a320a2ccfc5d864447901ded6ce109b2bdcc"
 
   url "https://github.com/zszbyzsz/aibar/releases/download/v#{version}/aibar-#{version}.zip"
   name "aibar"

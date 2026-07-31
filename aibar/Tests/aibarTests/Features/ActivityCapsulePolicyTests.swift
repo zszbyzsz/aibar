@@ -1,0 +1,89 @@
+import XCTest
+@testable import aibar
+
+final class ActivityCapsulePolicyTests: XCTestCase {
+    private let now = Date(timeIntervalSinceReferenceDate: 10_000)
+
+    func testCompletionIsAnnouncedFirstThenRetainedAfterRunningRows() {
+        let running = [activeRow(key: "running")]
+        let completed = completion(key: "done", secondsAgo: 5)
+
+        let announcing = ActivityCapsulePolicy.rows(
+            running: running,
+            announcement: completed,
+            retained: [completed]
+        )
+        XCTAssertEqual(announcing.map(\.id), ["completed-done", "active-running"])
+
+        let retained = ActivityCapsulePolicy.rows(
+            running: running,
+            announcement: nil,
+            retained: [completed]
+        )
+        XCTAssertEqual(retained.map(\.id), ["active-running", "completed-done"])
+    }
+
+    func testCompletedRowsRemainForExactlyTwoMinutesWhileProjectsRun() {
+        XCTAssertEqual(ActivityCapsulePolicy.completionRetentionDuration, 120)
+
+        let stillVisible = completion(key: "visible", secondsAgo: 119.9)
+        let expired = completion(key: "expired", secondsAgo: 120)
+        let retained = ActivityCapsulePolicy.retainedCompletions(
+            from: [expired, stillVisible],
+            now: now,
+            hasRunningProjects: true
+        )
+
+        XCTAssertEqual(retained.map(\.key), ["visible"])
+    }
+
+    func testCompletionShelfClearsWhenAllProjectsFinish() {
+        let retained = ActivityCapsulePolicy.retainedCompletions(
+            from: [completion(key: "done", secondsAgo: 10)],
+            now: now,
+            hasRunningProjects: false
+        )
+
+        XCTAssertTrue(retained.isEmpty)
+    }
+
+    func testMultipleCompletionsKeepChronologicalTailOrder() {
+        let retained = ActivityCapsulePolicy.retainedCompletions(
+            from: [
+                completion(key: "latest", secondsAgo: 10),
+                completion(key: "earliest", secondsAgo: 30)
+            ],
+            now: now,
+            hasRunningProjects: true
+        )
+
+        XCTAssertEqual(retained.map(\.key), ["earliest", "latest"])
+    }
+
+    private func completion(key: String, secondsAgo: TimeInterval) -> RetainedCompletion {
+        RetainedCompletion(
+            key: key,
+            project: key,
+            outcome: .completed,
+            completedAt: now.addingTimeInterval(-secondsAgo)
+        )
+    }
+
+    private func activeRow(key: String) -> CapsuleRow {
+        CapsuleRow(
+            id: "active-\(key)",
+            threadID: key,
+            display: .active(ProjectActivity(
+                project: key,
+                model: nil,
+                phase: .working,
+                lastActivityAt: now,
+                startedAt: now,
+                sessionTokens: 0,
+                sandboxPolicy: "",
+                approvalMode: "",
+                threadID: key
+            ))
+        )
+    }
+}

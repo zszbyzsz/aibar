@@ -3,31 +3,60 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchController: NotchWindowController?
     private var activityStatusBarController: ActivityStatusBarController?
+    private var quotaStatusBarController: QuotaStatusBarController?
     private var statusItem: NSStatusItem?
     private var screenshotCoordinator: ScreenshotCoordinator?
     private var screenshotHotKey: GlobalScreenshotHotKey?
+    private var updateService: AppUpdateService?
 
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        notchController = NotchWindowController()
+        configureApplicationIcon()
+        notchController = NotchWindowController(store: UsageStore())
         activityStatusBarController = ActivityStatusBarController()
+        if let usageStore = notchController?.usageStore {
+            quotaStatusBarController = QuotaStatusBarController(
+                store: usageStore,
+                presentActivity: { [weak self] in
+                    self?.activityStatusBarController?.presentFromQuotaReadout() ?? false
+                }
+            )
+            activityStatusBarController?.onQuotaPresentationCollapsed = { [weak self] in
+                self?.quotaStatusBarController?.showReadouts()
+            }
+        }
         screenshotCoordinator = ScreenshotCoordinator(
             language: { [weak self] in self?.notchController?.currentLanguage ?? .zh },
             setChromeSuppressed: { [weak self] suppressed in
                 self?.notchController?.setScreenshotSuppressed(suppressed)
                 self?.activityStatusBarController?.setScreenshotSuppressed(suppressed)
+                self?.quotaStatusBarController?.setScreenshotSuppressed(suppressed)
             }
         )
         screenshotHotKey = GlobalScreenshotHotKey { [weak self] in
             self?.screenshotCoordinator?.captureRegion()
         }
         setUpStatusItem()
+        setUpUpdateChecks()
         // Useful for deterministic local UI checks and screenshots without
         // changing the normal hover-to-reveal behavior for everyday launches.
         if CommandLine.arguments.contains("--open") {
             notchController?.showDashboardForPreview()
         }
+    }
+
+    @MainActor
+    private func setUpUpdateChecks() {
+        guard let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              let activityStatusBarController
+        else { return }
+
+        let service = AppUpdateService(currentVersion: version) { [weak activityStatusBarController] notice in
+            activityStatusBarController?.setUpdateNotice(notice)
+        }
+        updateService = service
+        service.start()
     }
 
     /// A menu-bar icon is the only affordance for opening the dashboard (or
@@ -37,14 +66,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setUpStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            let image = NSImage(systemSymbolName: "chart.line.uptrend.xyaxis", accessibilityDescription: "aibar")
-            image?.isTemplate = true
-            button.image = image
+            button.image = BrandIcon.menuBarImage()
+            button.imagePosition = .imageOnly
+            button.toolTip = "aibar"
             button.target = self
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         statusItem = item
+    }
+
+    /// Keep the runtime application identity in sync with the Finder icon.
+    /// This is also used by system-owned UI such as app switchers and alerts
+    /// if the accessory application is surfaced there.
+    private func configureApplicationIcon() {
+        guard
+            let iconURL = Bundle.main.url(forResource: "aibar", withExtension: "icns"),
+            let image = NSImage(contentsOf: iconURL)
+        else { return }
+
+        NSApp.applicationIconImage = image
     }
 
     @MainActor

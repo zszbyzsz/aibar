@@ -146,10 +146,31 @@ enum UsageAggregation {
             let cached = min(rawInput - cacheWrite, usage["cached_input_tokens"] ?? 0)
             let uncached = max(0, rawInput - cached - cacheWrite)
             let output = usage["output_tokens"] ?? 0
+
+            let longRawInput = min(rawInput, usage["long_context_input_tokens"] ?? 0)
+            let longCacheWrite = min(cacheWrite, usage["long_context_cache_write_input_tokens"] ?? 0)
+            let longCached = min(cached, usage["long_context_cached_input_tokens"] ?? 0)
+            let longUncached = max(0, longRawInput - longCached - longCacheWrite)
+            let longOutput = min(output, usage["long_context_output_tokens"] ?? 0)
+
+            let shortUncached = max(0, uncached - longUncached)
+            let shortCacheWrite = max(0, cacheWrite - longCacheWrite)
+            let shortCached = max(0, cached - longCached)
+            let shortOutput = max(0, output - longOutput)
+
+            let inputMultiplier = price.longInputMultiplier ?? 1
+            let cachedMultiplier = price.longCachedInputMultiplier ?? 1
+            let cacheWriteMultiplier = price.longCacheWriteMultiplier ?? 1
+            let outputMultiplier = price.longOutputMultiplier ?? 1
             return (
-                (Double(uncached) * price.input + Double(cacheWrite) * price.cacheWrite) / 1_000_000,
-                Double(cached) * price.cachedInput / 1_000_000,
-                Double(output) * price.output / 1_000_000
+                (Double(shortUncached) * price.input
+                    + Double(longUncached) * price.input * inputMultiplier
+                    + Double(shortCacheWrite) * price.cacheWrite
+                    + Double(longCacheWrite) * price.cacheWrite * cacheWriteMultiplier) / 1_000_000,
+                (Double(shortCached) * price.cachedInput
+                    + Double(longCached) * price.cachedInput * cachedMultiplier) / 1_000_000,
+                (Double(shortOutput) * price.output
+                    + Double(longOutput) * price.output * outputMultiplier) / 1_000_000
             )
         }
 

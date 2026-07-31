@@ -95,6 +95,47 @@ final class UsageAggregationTests: XCTestCase {
         XCTAssertEqual(price.cacheWrite, 3)
     }
 
+    func testBuildPayloadAppliesLongContextRatesToOnlyFlaggedEvents() {
+        let now = Date()
+        let day = UsageAggregation.isoDateOnly(now)
+        let usage = [
+            // 1M short + 1M long input; each half contains the same category mix.
+            "input_tokens": 2_000_000,
+            "cached_input_tokens": 1_200_000,
+            "cache_write_input_tokens": 400_000,
+            "output_tokens": 200_000,
+            "total_tokens": 2_200_000,
+            "long_context_input_tokens": 1_000_000,
+            "long_context_cached_input_tokens": 600_000,
+            "long_context_cache_write_input_tokens": 200_000,
+            "long_context_output_tokens": 100_000,
+        ]
+        let summary = FileSummary(
+            endedAt: Formatting.isoTimestamp(from: now),
+            usage: usage,
+            usageByModel: ["gpt-test": usage],
+            dailyUsageByModel: [day: ["gpt-test": usage]],
+            limitsByKind: [:], planType: nil, planAt: nil, project: nil
+        )
+        let price = ModelPrice(
+            input: 2, cachedInput: 0.5, output: 8, cacheWrite: 2.5,
+            longContextThreshold: 272_000,
+            longInputMultiplier: 2, longCachedInputMultiplier: 2,
+            longCacheWriteMultiplier: 2, longOutputMultiplier: 1.5,
+            source: "test", status: "live"
+        )
+
+        let payload = UsageAggregation.buildPayload(
+            cacheFiles: ["session.jsonl": CachedEntry(mtime: 0, size: 1, summary: summary)],
+            prices: ["gpt-test": price], priceStatus: "live", defaultPlan: "Codex",
+            normalizeModel: { $0 ?? "unknown" }
+        )
+
+        // Short: 200k input @2 + 200k write @2.5 + 600k cached @.5 + 100k output @8 = 2.0
+        // Long: the same mix at 2x input/cache/write and 1.5x output = 3.6
+        XCTAssertEqual(payload.monthCost, 5.6, accuracy: 0.000_001)
+    }
+
     /// Regression test for a real bug: a session file can report a named
     /// per-model sub-quota (e.g. a preview model's own limit) under the same
     /// `weekly` window as the account's real overall usage. A later

@@ -29,7 +29,13 @@ struct DashboardView: View {
     private var data: UsagePayload { store.payload }
     private var lang: AppLanguage { store.language }
     private var weeklyLabel: String { L.weeklyLabel(lang, isMonthly: data.weeklyKind == "monthly") }
-    private var hasPriceSource: Bool { data.priceStatus != "fallback" }
+    private var priceStatusLabel: String {
+        switch data.priceStatus {
+        case "live", "cached": return L.pricingSynced(lang)
+        case "partial": return L.pricingPartial(lang)
+        default: return L.pricingOffline(lang)
+        }
+    }
 
     /// Last 7 days vs. the 7 before that, both already covered by the existing
     /// `daily` array (well past the 14 this needs) — no extra history
@@ -124,7 +130,7 @@ struct DashboardView: View {
         SectionCard(
             title: L.modelBreakdownTitle(lang),
             icon: "cpu.fill",
-            trailing: hasPriceSource ? L.pricingSynced(lang) : L.pricingOffline(lang)
+            trailing: priceStatusLabel
         ) {
             ModelBreakdownView(models: data.models, rates: data.pricingRates)
         }

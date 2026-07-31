@@ -9,7 +9,8 @@ import Combine
 @MainActor
 final class NotchWindowController: NSObject, ObservableObject {
     private let panel: NSPanel
-    private let store = UsageStore()
+    let usageStore: UsageStore
+    private var store: UsageStore { usageStore }
     // @Published (not a plain var) is what actually makes SwiftUI re-render RootView
     // when a hover event flips this — mutating a bare var here was a no-op as far as
     // SwiftUI's view graph was concerned, so the panel resized but kept showing the
@@ -47,7 +48,8 @@ final class NotchWindowController: NSObject, ObservableObject {
     /// hand-off inert until the popover itself reports it has closed.
     private var isPopoverOpen = false
 
-    override init() {
+    init(store: UsageStore) {
+        usageStore = store
         panel = NSPanel(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel],

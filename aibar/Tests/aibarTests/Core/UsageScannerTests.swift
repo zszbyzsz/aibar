@@ -105,6 +105,66 @@ final class UsageScannerTests: XCTestCase {
         XCTAssertEqual(summary.usage["total_tokens"], 1020)
     }
 
+    /// Codex can refresh a non-billing detail in the running snapshot while
+    /// keeping its authoritative total unchanged. That is still a redisplay,
+    /// even though comparing the entire dictionary would make it look new.
+    func testParseSessionIgnoresTokenCountWhenOnlyRunningSnapshotDetailsChange() throws {
+        let lines = [
+            #"{"timestamp":"2026-07-20T10:00:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}"#,
+            #"{"timestamp":"2026-07-20T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":500,"output_tokens":10,"total_tokens":510},"total_token_usage":{"input_tokens":500,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":510}}}}"#,
+            #"{"timestamp":"2026-07-20T10:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":0,"output_tokens":0,"reasoning_output_tokens":7,"total_tokens":7},"total_token_usage":{"input_tokens":500,"output_tokens":10,"reasoning_output_tokens":7,"total_tokens":510}}}}"#,
+        ]
+        let url = try writeFixture(lines)
+        let scanner = UsageScanner()
+
+        let summary = try XCTUnwrap(scanner.parseSession(url: url))
+        XCTAssertEqual(summary.usage["total_tokens"], 510)
+        XCTAssertEqual(summary.usage["reasoning_output_tokens"], 0)
+    }
+
+    /// A new transcript sometimes starts with a stale UI-only total even
+    /// though no billed category moved. Its running total may be inherited
+    /// from a parent transcript, so that value alone cannot validate it.
+    func testParseSessionIgnoresInitialGhostTotalWithNoBillableCategories() throws {
+        let lines = [
+            #"{"timestamp":"2026-07-20T10:00:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}"#,
+            #"{"timestamp":"2026-07-20T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":4554},"total_token_usage":{"input_tokens":613000,"cached_input_tokens":600000,"cache_write_input_tokens":0,"output_tokens":931,"reasoning_output_tokens":100,"total_tokens":613931}}}}"#,
+        ]
+        let url = try writeFixture(lines)
+        let scanner = UsageScanner()
+
+        XCTAssertNil(scanner.parseSession(url: url))
+    }
+
+    /// Legacy records without a running counter still rely on their last-usage
+    /// value, so the ghost filter must not discard valid total-only history.
+    func testParseSessionKeepsTotalOnlyUsageWhenNoRunningCounterExists() throws {
+        let lines = [
+            #"{"timestamp":"2026-07-20T10:01:00Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.6-sol","info":{"last_token_usage":{"total_tokens":123}}}}"#,
+        ]
+        let url = try writeFixture(lines)
+        let scanner = UsageScanner()
+
+        let summary = try XCTUnwrap(scanner.parseSession(url: url))
+        XCTAssertEqual(summary.usage["total_tokens"], 123)
+    }
+
+    func testParseSessionPreservesPerEventLongContextSlicesForPricing() throws {
+        let lines = [
+            #"{"timestamp":"2026-07-20T10:00:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}"#,
+            #"{"timestamp":"2026-07-20T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":272001,"cached_input_tokens":200000,"cache_write_input_tokens":50000,"output_tokens":1000,"total_tokens":273001},"total_token_usage":{"input_tokens":272001,"cached_input_tokens":200000,"cache_write_input_tokens":50000,"output_tokens":1000,"total_tokens":273001}}}}"#,
+        ]
+        let url = try writeFixture(lines)
+        let scanner = UsageScanner()
+
+        let summary = try XCTUnwrap(scanner.parseSession(url: url))
+        let usage = try XCTUnwrap(summary.usageByModel["gpt-5.6-sol"])
+        XCTAssertEqual(usage["long_context_input_tokens"], 272_001)
+        XCTAssertEqual(usage["long_context_cached_input_tokens"], 200_000)
+        XCTAssertEqual(usage["long_context_cache_write_input_tokens"], 50_000)
+        XCTAssertEqual(usage["long_context_output_tokens"], 1_000)
+    }
+
     /// Older Codex sessions log their first `token_count` events before any
     /// `turn_context` names a model. Left as "unknown" those tokens match no
     /// price table entry and are costed at $0, so they're re-attributed to the

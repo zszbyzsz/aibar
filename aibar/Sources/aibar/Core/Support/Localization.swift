@@ -119,6 +119,20 @@ enum L {
             ? "项目 \(project)，\(activityOutcomeLabel(lang, outcome: outcome))"
             : "Project \(project), \(activityOutcomeLabel(lang, outcome: outcome))"
     }
+    static func updateCapsuleLabel(_ lang: AppLanguage, version: String, downloaded: Bool) -> String {
+        if lang == .zh { return downloaded ? "v\(version) 已拉取" : "可更新 v\(version)" }
+        return downloaded ? "v\(version) downloaded" : "Update v\(version)"
+    }
+    static func updateAccessibilityLabel(_ lang: AppLanguage, version: String, downloaded: Bool) -> String {
+        if lang == .zh {
+            return downloaded
+                ? "aibar v\(version) 更新包已下载，点击在访达中显示"
+                : "aibar v\(version) 可更新，点击查看发布页面"
+        }
+        return downloaded
+            ? "aibar version \(version) downloaded, click to reveal in Finder"
+            : "aibar version \(version) available, click to view the release"
+    }
 
     static func hourWindow(_ lang: AppLanguage, _ hours: Int) -> String {
         lang == .zh ? "\(hours)h 窗口" : "\(hours)h window"
@@ -130,6 +144,9 @@ enum L {
         lang == .zh ? "近 \(days) 天峰值 \(money)" : "\(days)d peak \(money)"
     }
     static func pricingSynced(_ lang: AppLanguage) -> String { lang == .zh ? "价格已同步" : "Pricing synced" }
+    static func pricingPartial(_ lang: AppLanguage) -> String {
+        lang == .zh ? "部分价格使用离线缓存" : "Some prices use offline fallback"
+    }
     static func pricingOffline(_ lang: AppLanguage) -> String {
         lang == .zh ? "使用离线缓存价格" : "Using cached offline pricing"
     }
@@ -137,8 +154,12 @@ enum L {
         lang == .zh ? "\(calls) 次调用 · \(edits) 次修改" : "\(calls) tool calls · \(edits) file edits"
     }
 
-    static func todayCost(_ lang: AppLanguage) -> String { lang == .zh ? "今日费用" : "Today's cost" }
-    static func monthCost(_ lang: AppLanguage) -> String { lang == .zh ? "30 天费用" : "30d cost" }
+    static func todayCost(_ lang: AppLanguage) -> String {
+        lang == .zh ? "今日 API 等价费用" : "Today's API-equivalent cost"
+    }
+    static func monthCost(_ lang: AppLanguage) -> String {
+        lang == .zh ? "30 天 API 等价费用" : "30d API-equivalent cost"
+    }
     static func monthTokens(_ lang: AppLanguage) -> String { lang == .zh ? "30 天 token" : "30d tokens" }
     static func latestSessionTokens(_ lang: AppLanguage) -> String {
         lang == .zh ? "最近会话 token" : "Latest session tokens"
@@ -146,13 +167,13 @@ enum L {
 
     static func footnotePriced(_ lang: AppLanguage) -> String {
         lang == .zh
-            ? "含 cache 读取折扣及写入费率，按真实 token 计费。"
-            : "Includes cache-read discounts and cache-write pricing, billed by actual tokens."
+            ? "按公开 API 费率估算，含 cache 读取折扣及写入费率；不是订阅扣费或账单。"
+            : "Estimated from public API rates with cache pricing; not subscription usage or a bill."
     }
     static func footnoteUnpriced(_ lang: AppLanguage, models: String) -> String {
         lang == .zh
-            ? "含 cache 读取折扣及写入费率；\(models) 未定价，仅统计 token。"
-            : "Includes cache-read discounts and cache-write pricing; \(models) unpriced, token-only."
+            ? "按公开 API 费率估算；\(models) 未定价，仅统计 token；不是订阅扣费或账单。"
+            : "Estimated from public API rates; \(models) unpriced and token-only; not a bill."
     }
 
     static func refreshNow(_ lang: AppLanguage) -> String { lang == .zh ? "立即刷新" : "Refresh Now" }

@@ -16,14 +16,15 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     private let panel: NSPanel
     private let monitor = CodexActivityMonitor()
     /// Read by `ActivityStatusBarView`. Order matters: a just-finished
-    /// project's `.completed` notice (if any) is always first, followed by
-    /// every currently running project in whatever order
+    /// project's `.completed` announcement (if any) is temporarily first,
+    /// followed by every currently running project in whatever order
     /// `CodexActivityMonitor.activeThreadStates` returned them — that's
     /// already `ORDER BY updated_at_ms DESC` (most recently active first),
     /// so there's deliberately no additional sort applied here; re-deriving
     /// an order (e.g. by running duration) both adds work and risks the list
     /// visibly reordering itself between polls for no reason a viewer would
-    /// notice or want. Collapsed, only `rows.first` is drawn (see
+    /// notice or want. Recently completed tasks come last after their
+    /// announcement ends. Collapsed, only `rows.first` is drawn (see
     /// `ActivityStatusBarView`); `isExpanded` reveals the rest.
     @Published fileprivate(set) var rows: [CapsuleRow] = []
     /// Whether the full stack is pulled down. Read by `ActivityStatusBarView`
@@ -45,11 +46,16 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// it's called from somewhere other than a fresh poll, namely a
     /// completion notice's own clear timer.
     private var lastRunningRows: [CapsuleRow] = []
-    /// The most recent finish still within its display window. Only one is
-    /// kept — if a second project finishes while this one is still showing,
-    /// it simply replaces it rather than queueing, so the top row is always
-    /// the single latest outcome rather than a growing backlog of them.
-    private var completedNotice: (key: String, project: String, outcome: ActivityOutcome)?
+    /// The latest finish still within its prominent five-second announcement
+    /// window. Earlier finishes are not discarded; they move to
+    /// `retainedCompletions` at the end of the expanded running list.
+    private var completedAnnouncement: RetainedCompletion?
+    /// Completed tasks kept behind the running rows for at most two minutes.
+    /// This shelf is cleared as soon as no running projects remain.
+    private var retainedCompletions: [RetainedCompletion] = []
+    /// Latest repository update discovered by the six-hour checker. It is
+    /// appended only while task activity already makes the capsule visible.
+    private var updateNotice: AppUpdateNotice?
     /// A thread whose rollout just went idle, but not trusted yet. Codex
     /// marks the end of *every* internal turn with the same `task_complete`
     /// label this reads, including turns inside a longer autonomous run that
@@ -66,10 +72,15 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
 
     private var pollTimer: Timer?
     private var hideWorkItem: DispatchWorkItem?
-    /// Clears `completedNotice` once it's had its `completionDisplayDuration`
-    /// on screen. Cancelled if a new completion supersedes it, or if its own
-    /// thread starts running again, before that timer fires.
-    private var completionClearWorkItem: DispatchWorkItem?
+    /// Clears `completedAnnouncement` once it's had its
+    /// `completionAnnouncementDuration` on screen. Cancelled if a new
+    /// completion supersedes it, or if its own thread starts running again,
+    /// before that timer fires.
+    private var announcementClearWorkItem: DispatchWorkItem?
+    /// Removes the earliest two-minute completion shelf entry at its exact
+    /// expiry time. Polling would eventually do this too, but an exact timer
+    /// prevents the row lingering for another expanded 10-second poll cycle.
+    private var retentionClearWorkItem: DispatchWorkItem?
     /// A short grace period before actually collapsing after the pointer
     /// leaves — mirrors `NotchWindowController.scheduleAutoClose`'s reasoning:
     /// enough slack to not flicker shut on a momentary gap, short enough to
@@ -98,6 +109,11 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// a show that happened right after it was scheduled.
     private var isPanelVisible = false
     private var isScreenshotSuppressed = false
+    /// Set only for the temporary hand-off from the side quota readouts. When
+    /// that expanded status view folds back up, its owner restores the two
+    /// percentage readouts beside the notch.
+    private var presentedFromQuotaReadout = false
+    var onQuotaPresentationCollapsed: (() -> Void)?
     /// User-facing on/off switch (menu bar icon's right-click menu),
     /// persisted across launches. Polling and sound still run while
     /// disabled — only the pill itself stays off screen — so re-enabling
@@ -127,11 +143,9 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// active ones — a hard cap so a runaway number of threads can't push
     /// the pill stack off the bottom of the screen.
     private static let maxRunningRows = 10
-    /// How long a finished run's checkmark/outcome stays on screen before the
-    /// capsule fades out on its own — long enough to actually read the
-    /// project name and outcome (and, since the row is clickable the whole
-    /// time, to click through to it), short enough to stay out of the way.
-    private static let completionDisplayDuration: TimeInterval = 5
+    /// How long a finished run temporarily occupies the first row as an
+    /// announcement before moving behind the running projects.
+    private static let completionAnnouncementDuration: TimeInterval = 5
     /// How many *consecutive* idle polls a thread must show before its
     /// completion is trusted — see `pendingCompletions`. 2 means: seen idle
     /// now, and still idle next poll too, so at least one full poll interval
@@ -188,6 +202,10 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
 
     deinit {
         pollTimer?.invalidate()
+        announcementClearWorkItem?.cancel()
+        retentionClearWorkItem?.cancel()
+        collapseWorkItem?.cancel()
+        hoverPollWorkItem?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -228,11 +246,7 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
                 // announced* completion — e.g. a follow-up turn started
                 // right after the confirmed one — so its notice no longer
                 // applies.
-                if completedNotice?.key == entry.key {
-                    completionClearWorkItem?.cancel()
-                    completionClearWorkItem = nil
-                    completedNotice = nil
-                }
+                removeCompletion(for: entry.key)
                 // `states` already arrives in `activeThreadStates`'s own
                 // `ORDER BY updated_at_ms DESC` — appending in that same
                 // order (and simply stopping once there are enough) is the
@@ -264,8 +278,11 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
                     // was interrupted, or just went quiet.
                     pendingCompletions[entry.key] = nil
                     playSound(for: outcome)
-                    completedNotice = (key: entry.key, project: previous.project, outcome: outcome ?? .completed)
-                    scheduleCompletionClear(for: entry.key)
+                    announceCompletion(
+                        key: entry.key,
+                        project: previous.project,
+                        outcome: outcome ?? .completed
+                    )
                 }
             }
         }
@@ -279,23 +296,21 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         }
 
         lastRunningRows = runningRows
+        pruneRetainedCompletions()
         rebuildDisplay()
+        scheduleRetentionClear()
     }
 
-    /// Recomputes `rows` from `lastRunningRows` and `completedNotice`. A
-    /// just-finished project's notice always sorts first — occupying the
-    /// single visible slot when collapsed, or the top of the stack when
-    /// expanded — with every running project listed below it.
+    /// Recomputes `rows` from the current running list and completion state.
+    /// The latest announcement temporarily sorts first; running projects
+    /// keep their monitor order; retained completions are always last.
     private func rebuildDisplay() {
-        var newRows: [CapsuleRow] = []
-        if let completedNotice {
-            newRows.append(CapsuleRow(
-                id: "completed-\(completedNotice.key)",
-                threadID: completedNotice.key,
-                display: .completed(project: completedNotice.project, outcome: completedNotice.outcome)
-            ))
-        }
-        newRows.append(contentsOf: lastRunningRows)
+        let newRows = ActivityCapsulePolicy.rows(
+            running: lastRunningRows,
+            announcement: completedAnnouncement,
+            retained: retainedCompletions,
+            updateNotice: updateNotice
+        )
 
         // Only a change to *which* rows exist is worth a spring transaction —
         // that's the case where SwiftUI actually has something to animate
@@ -315,15 +330,68 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         updateVisibility()
     }
 
-    private func scheduleCompletionClear(for key: String) {
-        completionClearWorkItem?.cancel()
+    private func announceCompletion(key: String, project: String, outcome: ActivityOutcome) {
+        let completion = RetainedCompletion(
+            key: key,
+            project: project,
+            outcome: outcome,
+            completedAt: Date()
+        )
+        retainedCompletions.removeAll { $0.key == key }
+        retainedCompletions.append(completion)
+        completedAnnouncement = completion
+
+        announcementClearWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.completedNotice?.key == key else { return }
-            self.completedNotice = nil
+            guard let self, self.completedAnnouncement?.key == key else { return }
+            self.completedAnnouncement = nil
+            self.pruneRetainedCompletions()
             self.rebuildDisplay()
+            self.scheduleRetentionClear()
         }
-        completionClearWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.completionDisplayDuration, execute: work)
+        announcementClearWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.completionAnnouncementDuration,
+            execute: work
+        )
+    }
+
+    private func removeCompletion(for key: String) {
+        retainedCompletions.removeAll { $0.key == key }
+        guard completedAnnouncement?.key == key else { return }
+        announcementClearWorkItem?.cancel()
+        announcementClearWorkItem = nil
+        completedAnnouncement = nil
+    }
+
+    private func pruneRetainedCompletions(now: Date = Date()) {
+        retainedCompletions = ActivityCapsulePolicy.retainedCompletions(
+            from: retainedCompletions,
+            now: now,
+            hasRunningProjects: !lastRunningRows.isEmpty
+        )
+    }
+
+    private func scheduleRetentionClear(now: Date = Date()) {
+        retentionClearWorkItem?.cancel()
+        retentionClearWorkItem = nil
+        guard !lastRunningRows.isEmpty,
+              let nextExpiry = retainedCompletions
+                .map({ $0.completedAt.addingTimeInterval(ActivityCapsulePolicy.completionRetentionDuration) })
+                .min()
+        else { return }
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pruneRetainedCompletions()
+            self.rebuildDisplay()
+            self.scheduleRetentionClear()
+        }
+        retentionClearWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + max(0, nextExpiry.timeIntervalSince(now)),
+            execute: work
+        )
     }
 
     /// Called by `ActivityStatusBarView` as the pointer enters/leaves the
@@ -358,10 +426,40 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
                 withAnimation(.notchSpring) { self.isExpanded = false }
                 self.resizeForCurrentContent()
                 self.restartPollTimer(interval: Self.pollIntervalCollapsed)
+                self.finishQuotaPresentationIfNeeded()
             }
             collapseWorkItem = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
         }
+    }
+
+    /// Expands the activity stack after the pointer enters a side quota
+    /// readout. The caller hides its readouts only when this returns true, so
+    /// an empty or disabled capsule never leaves the user with no UI at all.
+    func presentFromQuotaReadout() -> Bool {
+        guard isEnabled, !rows.isEmpty, !isScreenshotSuppressed else { return false }
+        presentedFromQuotaReadout = true
+        setListHovering(true)
+
+        // The pointer normally travels straight down into the capsule. If it
+        // does not arrive, fold the temporary presentation back up promptly;
+        // `setListHovering(true)` from the capsule cancels this hand-off.
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.presentedFromQuotaReadout else { return }
+            withAnimation(.notchSpring) { self.isExpanded = false }
+            self.resizeForCurrentContent()
+            self.restartPollTimer(interval: Self.pollIntervalCollapsed)
+            self.finishQuotaPresentationIfNeeded()
+        }
+        collapseWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
+        return true
+    }
+
+    private func finishQuotaPresentationIfNeeded() {
+        guard presentedFromQuotaReadout else { return }
+        presentedFromQuotaReadout = false
+        onQuotaPresentationCollapsed?()
     }
 
     /// A fresh reading of what the newly revealed rows are showing, held back
@@ -413,6 +511,7 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
             }
             hideWorkItem = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+            finishQuotaPresentationIfNeeded()
         }
     }
 
@@ -422,6 +521,7 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         isEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: Self.enabledDefaultsKey)
         updateVisibility()
+        if !enabled { finishQuotaPresentationIfNeeded() }
     }
 
     /// Keeps the always-on activity capsule out of screenshots made by this
@@ -430,6 +530,12 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         guard suppressed != isScreenshotSuppressed else { return }
         isScreenshotSuppressed = suppressed
         updateVisibility()
+    }
+
+    func setUpdateNotice(_ notice: AppUpdateNotice?) {
+        guard notice != updateNotice else { return }
+        updateNotice = notice
+        rebuildDisplay()
     }
 
     private func playSound(for outcome: ActivityOutcome?) {
@@ -545,6 +651,18 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         } else if let url = URL(string: "codex://") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    func activate(_ row: CapsuleRow) {
+        if case .update(let notice) = row.display {
+            if let packageURL = notice.packageURL {
+                NSWorkspace.shared.activateFileViewerSelecting([packageURL])
+            } else {
+                NSWorkspace.shared.open(notice.releaseURL)
+            }
+            return
+        }
+        openCodex(threadID: row.threadID)
     }
 
     @objc private func screenParametersChanged() {

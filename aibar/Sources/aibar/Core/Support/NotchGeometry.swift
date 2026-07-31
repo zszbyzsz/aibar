@@ -28,6 +28,27 @@ enum NotchGeometry {
         )
     }
 
+    /// Frames for compact, always-visible readouts immediately beside the
+    /// camera housing.  The height comes from the same safe-area-derived
+    /// notch rect used by the dashboard, rather than a hard-coded menu-bar
+    /// height, so it stays flush on each MacBook display configuration.
+    static func sideFrames(
+        on screen: NSScreen, width: CGFloat, inset: CGFloat = 0,
+        fallbackSize: CGSize
+    ) -> (left: CGRect, right: CGRect) {
+        let notch = rect(on: screen, fallbackSize: fallbackSize)
+        // `rect` extends 10pt below the cutout for the dashboard's easier
+        // hover target. The side readouts intentionally use the physical
+        // safe-area height itself, as they live alongside—not below—the
+        // camera housing.
+        let height = screen.safeAreaInsets.top > 0 ? screen.safeAreaInsets.top : notch.height
+        let y = screen.frame.maxY - height
+        return (
+            left: CGRect(x: notch.minX - width + inset, y: y, width: width, height: height),
+            right: CGRect(x: notch.maxX - inset, y: y, width: width, height: height)
+        )
+    }
+
     /// The tallest a panel hung `gap` beneath `notch` may be drawn before it
     /// would run off the bottom of the display, floored at `minimum` so one
     /// row is always permitted even on an implausibly short screen.

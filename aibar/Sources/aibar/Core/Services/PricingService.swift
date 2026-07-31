@@ -16,8 +16,8 @@ actor PricingService {
     /// $0 instead of falling back to a known-stale-but-right number.
     static let fallbackPrices: [String: ModelPrice] = [
         "gpt-5.6-sol": price(input: 5.0, cachedInput: 0.5, output: 30.0, model: "gpt-5.6-sol"),
-        "gpt-5.6-terra": price(input: 2.5, cachedInput: 0.25, output: 15.0, model: "gpt-5.6-terra"),
-        "gpt-5.6-luna": price(input: 1.0, cachedInput: 0.1, output: 6.0, model: "gpt-5.6-luna"),
+        "gpt-5.6-terra": price(input: 2.0, cachedInput: 0.2, output: 12.0, model: "gpt-5.6-terra"),
+        "gpt-5.6-luna": price(input: 0.2, cachedInput: 0.02, output: 1.2, model: "gpt-5.6-luna"),
         "gpt-5.5": price(input: 5.0, cachedInput: 0.5, output: 30.0, model: "gpt-5.5"),
         "gpt-5.4": price(input: 2.5, cachedInput: 0.25, output: 15.0, model: "gpt-5.4"),
         "gpt-5.4-mini": price(input: 0.75, cachedInput: 0.075, output: 4.5, model: "gpt-5.4-mini"),
@@ -27,13 +27,14 @@ actor PricingService {
 
     private var cachedAt = Date.distantPast
     private var cachedPrices: [String: ModelPrice] = [:]
+    private var cachedStatus = "fallback"
 
     /// Live-fetches current per-model $/1M-token rates (input, cached input, output) from
     /// each model's official doc page, refreshing at most every 12h; falls back to the last
     /// verified values when offline so the popover never shows a blank price.
     func prices() async -> (models: [String: ModelPrice], status: String) {
         if !cachedPrices.isEmpty, Date().timeIntervalSince(cachedAt) < Self.ttl {
-            return (cachedPrices, "cached")
+            return (cachedPrices, cachedStatus == "live" ? "cached" : cachedStatus)
         }
 
         var result: [String: ModelPrice] = [:]
@@ -59,20 +60,30 @@ actor PricingService {
             }
         }
 
-        let anyLive = result.values.contains { $0.status == "live" }
+        let liveCount = result.values.filter { $0.status == "live" }.count
+        let status = liveCount == Self.modelPages.count
+            ? "live"
+            : (liveCount > 0 ? "partial" : "fallback")
         if !result.isEmpty {
             cachedPrices = result
             cachedAt = Date()
+            cachedStatus = status
         }
-        return (result, anyLive ? "live" : "fallback")
+        return (result, status)
     }
 
     private static func price(input: Double, cachedInput: Double, output: Double, model: String) -> ModelPrice {
-        ModelPrice(
+        let longContext = longContextRates(for: model)
+        return ModelPrice(
             input: input,
             cachedInput: cachedInput,
             output: output,
             cacheWrite: cacheWriteRate(input: input, model: model),
+            longContextThreshold: longContext?.threshold,
+            longInputMultiplier: longContext?.input,
+            longCachedInputMultiplier: longContext?.cachedInput,
+            longCacheWriteMultiplier: longContext?.cacheWrite,
+            longOutputMultiplier: longContext?.output,
             source: modelPages[model]!,
             status: "fallback"
         )
@@ -92,11 +103,17 @@ actor PricingService {
             let cached = extract(pattern: #">Cached input</div><div[^>]*>\$([0-9]+(?:\.[0-9]+)?)</div>"#, from: html),
             let output = extract(pattern: #">Output</div><div[^>]*>\$([0-9]+(?:\.[0-9]+)?)</div>"#, from: html)
         else { return nil }
+        let longContext = longContextRates(for: model)
         return ModelPrice(
             input: input,
             cachedInput: cached,
             output: output,
             cacheWrite: cacheWriteRate(input: input, model: model),
+            longContextThreshold: longContext?.threshold,
+            longInputMultiplier: longContext?.input,
+            longCachedInputMultiplier: longContext?.cachedInput,
+            longCacheWriteMultiplier: longContext?.cacheWrite,
+            longOutputMultiplier: longContext?.output,
             source: urlString,
             status: "live"
         )
@@ -106,6 +123,17 @@ actor PricingService {
     /// rate; cache reads remain at the discounted cached-input rate.
     private static func cacheWriteRate(input: Double, model: String) -> Double {
         model.hasPrefix("gpt-5.6-") ? input * 1.25 : input
+    }
+
+    /// GPT-5.6, GPT-5.5, and GPT-5.4 apply their long-context tier to the
+    /// complete request once input exceeds 272K tokens. GPT-5.4 mini has no
+    /// published long-context tier, so it intentionally stays nil.
+    private static func longContextRates(
+        for model: String
+    ) -> (threshold: Int, input: Double, cachedInput: Double, cacheWrite: Double, output: Double)? {
+        let supportsLongContextPricing = model.hasPrefix("gpt-5.6-") || model == "gpt-5.5" || model == "gpt-5.4"
+        guard supportsLongContextPricing else { return nil }
+        return (272_000, 2, 2, 2, 1.5)
     }
 
     private static func extract(pattern: String, from text: String) -> Double? {

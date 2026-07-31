@@ -23,11 +23,11 @@ struct ActivityStatusBarView: View {
         // of visibly drifting apart.
         VStack(spacing: ActivityStatusBarController.rowSpacing) {
             if let topRow = controller.rows.first {
-                CapsuleRowView(row: topRow, lang: lang, onTap: { controller.openCodex(threadID: topRow.threadID) })
+                CapsuleRowView(row: topRow, lang: lang, onTap: { controller.activate(topRow) })
             }
             if controller.isExpanded {
                 ForEach(controller.rows.dropFirst()) { row in
-                    CapsuleRowView(row: row, lang: lang, onTap: { controller.openCodex(threadID: row.threadID) })
+                    CapsuleRowView(row: row, lang: lang, onTap: { controller.activate(row) })
                         .transition(.opacity)
                 }
             }
@@ -55,7 +55,7 @@ private struct CapsuleRowView: View {
     var body: some View {
         content
             .foregroundStyle(Color.notchInk)
-            .capsuleChrome(isHighlighted: isHighlighted, isPressed: isPressed)
+            .capsuleChrome(isHighlighted: isHighlighted, isPressed: isPressed, isUpdate: isUpdate)
             .frame(height: 32)
             .onTapGesture(perform: onTap)
             .simultaneousGesture(
@@ -99,7 +99,14 @@ private struct CapsuleRowView: View {
             ActivePillContent(activity: activity)
         case .completed(let project, let outcome):
             CompletedPillContent(project: project, outcome: outcome, lang: lang)
+        case .update(let notice):
+            UpdatePillContent(notice: notice, lang: lang)
         }
+    }
+
+    private var isUpdate: Bool {
+        if case .update = row.display { return true }
+        return false
     }
 
     private var accessibilityLabel: String {
@@ -108,6 +115,30 @@ private struct CapsuleRowView: View {
             return L.activityAccessibilityLabel(lang, project: activity.project, phase: activity.phase)
         case .completed(let project, let outcome):
             return L.activityCompletedAccessibilityLabel(lang, project: project, outcome: outcome)
+        case .update(let notice):
+            return L.updateAccessibilityLabel(lang, version: notice.version, downloaded: notice.packageURL != nil)
+        }
+    }
+}
+
+private struct UpdatePillContent: View {
+    var notice: AppUpdateNotice
+    var lang: AppLanguage
+
+    private let tint = Color(red: 1.000, green: 0.650, blue: 0.180)
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: notice.packageURL == nil ? "arrow.down.circle.fill" : "shippingbox.circle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(tint)
+            Text("aibar")
+                .font(.system(size: 11, weight: .semibold))
+            Spacer(minLength: 4)
+            Text(L.updateCapsuleLabel(lang, version: notice.version, downloaded: notice.packageURL != nil))
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(tint.opacity(0.9))
+                .lineLimit(1)
         }
     }
 }
@@ -248,16 +279,20 @@ private extension View {
     /// vector geometry, costs nothing comparable, and unlike the shadow it's
     /// visible (an outward shadow would in any case be clipped away, since the
     /// panel is sized to the capsule itself with nothing to spill into).
-    func capsuleChrome(isHighlighted: Bool, isPressed: Bool) -> some View {
+    func capsuleChrome(isHighlighted: Bool, isPressed: Bool, isUpdate: Bool) -> some View {
         self
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
                 Capsule()
-                    .fill(Color.black)
+                    .fill(isUpdate ? Color(red: 0.125, green: 0.082, blue: 0.025) : Color.black)
                     .overlay {
                         Capsule().strokeBorder(
-                            Color.white.opacity(isHighlighted ? 0.20 : 0), lineWidth: 1
+                            isUpdate
+                                ? Color(red: 1.000, green: 0.650, blue: 0.180)
+                                    .opacity(isHighlighted ? 0.65 : 0.32)
+                                : Color.white.opacity(isHighlighted ? 0.20 : 0),
+                            lineWidth: 1
                         )
                     }
             }

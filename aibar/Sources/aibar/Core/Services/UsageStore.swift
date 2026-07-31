@@ -47,6 +47,7 @@ final class UsageStore: ObservableObject {
     private let claudeScanner = ClaudeCodeUsageScanner()
     private let claudePricing = ClaudePricingService()
     private var timer: Timer?
+    private var hasStarted = false
     private var visibleCodexTimer: Timer?
     private var lastCodexStateFingerprint: CodexStateFingerprint?
 
@@ -81,6 +82,8 @@ final class UsageStore: ObservableObject {
     }
 
     func start() {
+        guard !hasStarted else { return }
+        hasStarted = true
         guard !demoMode else { return }
         Task { await refresh() }
         timer = Timer.scheduledTimer(withTimeInterval: Self.refreshInterval, repeats: true) { [weak self] _ in
