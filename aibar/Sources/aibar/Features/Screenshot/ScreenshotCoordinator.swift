@@ -21,6 +21,16 @@ final class ScreenshotCoordinator {
             return
         }
 
+        // TCC consent is associated with the app's bundle/signing identity,
+        // not copied by an updater. A correctly signed update keeps it; if a
+        // person previously denied Screen Recording, ask macOS again at the
+        // moment the feature is actually requested instead of failing later
+        // with an empty capture.
+        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+            presentScreenRecordingPermissionError()
+            return
+        }
+
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("aibar-\(UUID().uuidString)")
             .appendingPathExtension("png")
@@ -74,6 +84,18 @@ final class ScreenshotCoordinator {
         alert.alertStyle = .warning
         alert.messageText = lang == .zh ? "无法开始截图" : "Couldn’t Start Screenshot"
         alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: lang == .zh ? "好" : "OK")
+        alert.runModal()
+    }
+
+    private func presentScreenRecordingPermissionError() {
+        let lang = language()
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = lang == .zh ? "需要屏幕录制权限" : "Screen Recording Permission Required"
+        alert.informativeText = lang == .zh
+            ? "请在系统设置中允许 aibar 进行屏幕录制，然后再试一次。"
+            : "Allow aibar in System Settings > Privacy & Security > Screen Recording, then try again."
         alert.addButton(withTitle: lang == .zh ? "好" : "OK")
         alert.runModal()
     }

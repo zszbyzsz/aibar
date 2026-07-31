@@ -1,10 +1,11 @@
 import CryptoKit
 import Foundation
 
-/// Checks the repository's latest GitHub Release and safely pulls its archive.
-/// The app is currently ad-hoc signed, so this service downloads only assets
-/// carrying GitHub's SHA-256 digest and leaves installation to the user rather
-/// than silently replacing a running executable without a publisher signature.
+/// Checks the repository's latest GitHub Release and downloads only assets
+/// whose GitHub-provided SHA-256 digest can be verified locally. Installation
+/// is deliberately handled by `SelfUpdateInstaller`: replacing an app is safe
+/// only after it confirms that the new bundle has the same stable signing
+/// identity as the app the user originally authorised.
 @MainActor
 final class AppUpdateService {
     nonisolated static let checkInterval: TimeInterval = 6 * 60 * 60
@@ -16,6 +17,10 @@ final class AppUpdateService {
     private let onNoticeChange: @MainActor (AppUpdateNotice?) -> Void
     private var timer: Timer?
     private var checkTask: Task<Void, Never>?
+    /// Interactive checks that arrive while the launch/background request is
+    /// still in flight. Coalescing them avoids duplicate network work while
+    /// ensuring a user click always receives a result.
+    private var pendingCompletions: [@MainActor (CheckResult) -> Void] = []
 
     init(currentVersion: String, onNoticeChange: @escaping @MainActor (AppUpdateNotice?) -> Void) {
         self.currentVersion = currentVersion
@@ -38,7 +43,17 @@ final class AppUpdateService {
         self.timer = timer
     }
 
-    func checkNow() {
+    enum CheckResult {
+        case updateAvailable(AppUpdateNotice)
+        case upToDate
+        case failed
+    }
+
+    func checkNow(completion: (@MainActor (CheckResult) -> Void)? = nil) {
+        // A menu click made while the background launch check is running must
+        // not start a second download of the same archive. Its completion is
+        // attached to the existing request so the menu action is never silent.
+        if let completion { pendingCompletions.append(completion) }
         guard checkTask == nil else { return }
         let currentVersion = currentVersion
         checkTask = Task { @MainActor [weak self] in
@@ -47,12 +62,20 @@ final class AppUpdateService {
                 guard !Task.isCancelled else { return }
                 self?.checkTask = nil
                 self?.onNoticeChange(notice)
+                self?.finishChecks(with: notice.map(CheckResult.updateAvailable) ?? .upToDate)
             } catch {
                 // A transient offline/API failure must not erase a previously
                 // discovered update. The next six-hour check retries quietly.
                 self?.checkTask = nil
+                self?.finishChecks(with: .failed)
             }
         }
+    }
+
+    private func finishChecks(with result: CheckResult) {
+        let completions = pendingCompletions
+        pendingCompletions.removeAll()
+        completions.forEach { $0(result) }
     }
 
     nonisolated static func fetchLatestNotice(

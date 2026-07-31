@@ -4,6 +4,9 @@ import PackageDescription
 let package = Package(
     name: "aibar",
     platforms: [.macOS(.v13)],
+    products: [
+        .executable(name: "aibar", targets: ["aibar"])
+    ],
     targets: [
         .executableTarget(
             name: "aibar",

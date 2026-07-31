@@ -157,6 +157,9 @@ enum L {
             ? "aibar version \(version) downloaded, click to reveal in Finder"
             : "aibar version \(version) available, click to view the release"
     }
+    static func checkForUpdates(_ lang: AppLanguage) -> String {
+        lang == .zh ? "检查更新" : "Check for Updates"
+    }
 
     static func hourWindow(_ lang: AppLanguage, _ hours: Int) -> String {
         lang == .zh ? "\(hours)h 窗口" : "\(hours)h window"

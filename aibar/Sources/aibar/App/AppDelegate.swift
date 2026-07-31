@@ -129,6 +129,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(screenshotItem)
 
         menu.addItem(.separator())
+        let updateItem = NSMenuItem(title: L.checkForUpdates(lang), action: #selector(checkForUpdatesFromMenu), keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
+
         let quitItem = NSMenuItem(title: L.quitApp(lang), action: #selector(quitFromMenu), keyEquivalent: "")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -152,6 +156,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     @objc private func captureScreenshot() {
         screenshotCoordinator?.captureRegion()
+    }
+
+    /// A deliberate menu command is consent to download and apply an
+    /// available verified update. The helper keeps the current bundle in
+    /// place unless its signing identity matches the downloaded one, which
+    /// is what lets macOS retain existing TCC permissions such as Screen
+    /// Recording after the relaunch.
+    @MainActor
+    @objc private func checkForUpdatesFromMenu() {
+        guard let updateService else { return }
+        let lang = notchController?.currentLanguage ?? .zh
+        updateService.checkNow { [weak self] result in
+            switch result {
+            case .upToDate:
+                self?.presentUpdateAlert(
+                    title: lang == .zh ? "aibar 已是最新版本" : "aibar Is Up to Date",
+                    message: lang == .zh ? "当前没有可用更新。" : "No updates are available.",
+                    style: .informational
+                )
+            case .updateAvailable(let notice):
+                do {
+                    try SelfUpdateInstaller.install(notice)
+                    // The helper takes over after this app exits and relaunches
+                    // the new bundle. There is intentionally no second click.
+                } catch {
+                    self?.presentUpdateAlert(
+                        title: lang == .zh ? "无法自动更新" : "Couldn’t Update Automatically",
+                        message: SelfUpdateInstaller.userMessage(for: error, language: lang),
+                        style: .warning
+                    )
+                }
+            case .failed:
+                self?.presentUpdateAlert(
+                    title: lang == .zh ? "无法检查更新" : "Couldn’t Check for Updates",
+                    message: lang == .zh ? "请检查网络连接后重试。" : "Check your internet connection and try again.",
+                    style: .warning
+                )
+            }
+        }
+    }
+
+    @MainActor
+    private func presentUpdateAlert(title: String, message: String, style: NSAlert.Style) {
+        let alert = NSAlert()
+        alert.alertStyle = style
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: notchController?.currentLanguage == .zh ? "好" : "OK")
+        alert.runModal()
     }
 
     @objc private func quitFromMenu() {
