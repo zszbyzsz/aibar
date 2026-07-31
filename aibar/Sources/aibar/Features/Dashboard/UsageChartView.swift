@@ -5,6 +5,23 @@ private func shortDate(_ isoDate: String) -> String {
     String(isoDate.suffix(5))
 }
 
+/// Presentation policy for manually redeemable reset credits: distant credits
+/// remain quiet calendar markers, while credits expiring within ten days carry
+/// their exact expiry time and an urgency color.
+enum ResetExpiryUrgency {
+    static let detailedWindow: TimeInterval = 10 * 86_400
+
+    static func isDetailed(_ expiry: Double, now: Date = Date()) -> Bool {
+        let remaining = Date(timeIntervalSince1970: expiry).timeIntervalSince(now)
+        return remaining >= 0 && remaining <= detailedWindow
+    }
+
+    static func daysRemaining(_ expiry: Double, now: Date = Date()) -> Int {
+        let remaining = Date(timeIntervalSince1970: expiry).timeIntervalSince(now)
+        return max(0, Int(ceil(remaining / 86_400)))
+    }
+}
+
 /// A fixed-size 90-day window whose right edge advances to the furthest known
 /// Full reset expiry. With no reset it ends today; with an expiry 13 days out,
 /// for example, it naturally shows 76 historical days, today, and 13 future
@@ -78,6 +95,7 @@ struct UsageChartView: View {
     private static let cellSpacing: CGFloat = 2
     private static let legendRatios: [Double] = [0, 0.25, 0.5, 0.75, 1.0]
     private static let resetColor = Color(red: 1.000, green: 0.280, blue: 0.340)
+    private static let resetSoonColor = Color(red: 1.000, green: 0.620, blue: 0.160)
 
     private var daily: [DailyPoint] { timeline.points }
 
@@ -121,6 +139,50 @@ struct UsageChartView: View {
     private func resetExpiries(for point: DailyPoint?) -> [Double] {
         guard let point else { return [] }
         return timeline.resetExpiriesByDate[point.date] ?? []
+    }
+
+    private var expiringSoon: [Double] {
+        timeline.resetExpiriesByDate.values
+            .flatMap { $0 }
+            .filter { ResetExpiryUrgency.isDetailed($0) }
+            .sorted()
+    }
+
+    private func urgencyColor(for expiry: Double) -> Color {
+        switch ResetExpiryUrgency.daysRemaining(expiry) {
+        case 0...1: return Self.resetColor
+        case 2...3: return Color(red: 1.000, green: 0.460, blue: 0.180)
+        default: return Self.resetSoonColor
+        }
+    }
+
+    @ViewBuilder
+    private func resetMarker(for expiries: [Double]) -> some View {
+        if let imminent = expiries.first(where: { ResetExpiryUrgency.isDetailed($0) }) {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(urgencyColor(for: imminent))
+                .overlay(
+                    Text(Formatting.compactTimeLabel(imminent))
+                        .font(.system(size: 5.5, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(Color.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .padding(.horizontal, 1)
+                )
+                .accessibilityLabel(
+                    "\(L.resetExpiresSoon(lang)): \(Formatting.compactTimeLabel(imminent)), \(L.resetExpiryWithinDays(lang, days: ResetExpiryUrgency.daysRemaining(imminent)))"
+                )
+        } else {
+            Circle()
+                .fill(Self.resetColor)
+                .frame(width: Self.cellSize - 2, height: Self.cellSize - 2)
+                .overlay(
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 8, weight: .heavy))
+                        .foregroundStyle(Color.white)
+                )
+                .accessibilityLabel(L.resetExpiryLegend(lang))
+        }
     }
 
     var body: some View {
@@ -173,12 +235,7 @@ struct UsageChartView: View {
                                     RoundedRectangle(cornerRadius: 4)
                                         .fill(cellColor(point))
                                     if !expiries.isEmpty {
-                                        Circle()
-                                            .fill(Self.resetColor)
-                                            .frame(width: Self.cellSize - 2, height: Self.cellSize - 2)
-                                        Image(systemName: "arrow.counterclockwise")
-                                            .font(.system(size: 8, weight: .heavy))
-                                            .foregroundStyle(Color.white)
+                                        resetMarker(for: expiries)
                                     }
                                 }
                                     .frame(width: Self.cellSize, height: Self.cellSize)
@@ -223,11 +280,46 @@ struct UsageChartView: View {
                             .foregroundStyle(Color.white)
                     )
                 Text(L.resetExpiryLegend(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Self.resetSoonColor)
+                    .frame(width: 12, height: 12)
+                    .overlay(
+                        Image(systemName: "clock.fill")
+                            .font(.system(size: 6, weight: .heavy))
+                            .foregroundStyle(Color.white)
+                    )
+                Text(L.resetExpiresSoon(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
                 if let first = daily.first, let last = daily.last {
                     Text("· \(shortDate(first.date)) – \(shortDate(last.date))")
                         .font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
                 }
                 Spacer(minLength: 0)
+            }
+
+            if !expiringSoon.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L.resetExpiresSoon(lang))
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Self.resetSoonColor)
+
+                    ForEach(expiringSoon, id: \.self) { expiry in
+                        let days = ResetExpiryUrgency.daysRemaining(expiry)
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(urgencyColor(for: expiry))
+                                .frame(width: 6, height: 6)
+                            Text("\(shortDate(Self.isoFormatter.string(from: Date(timeIntervalSince1970: expiry)))) \(Formatting.compactTimeLabel(expiry))")
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(Color.notchInk)
+                            Text(L.resetExpiryWithinDays(lang, days: days))
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(urgencyColor(for: expiry))
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+                .padding(.top, 2)
+                .accessibilityElement(children: .contain)
             }
         }
     }
