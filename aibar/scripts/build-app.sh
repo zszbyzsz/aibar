@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="aibar"
 BUNDLE_ID="${BUNDLE_ID:-com.aibar.app}"
-APP_VERSION="${APP_VERSION:-0.1.7}"
+APP_VERSION="${APP_VERSION:-0.1.8}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 BUILD_DIR="$ROOT/.build/release"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
@@ -58,12 +58,19 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+SIGN_OPTIONS=(--force --sign "$SIGNING_IDENTITY")
 if [[ "$SIGNING_IDENTITY" == "-" ]]; then
-  echo "Ad-hoc signing (automatic updates will require a Developer ID signed release)..."
-  codesign --force --deep --sign - "$APP_DIR"
+  echo "Ad-hoc signing for local development (privacy grants will not survive rebuilds)..."
 else
   echo "Signing with $SIGNING_IDENTITY..."
-  codesign --force --deep --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP_DIR"
+  SIGN_OPTIONS+=(--options runtime --timestamp)
 fi
+
+# Sign nested code explicitly before sealing the outer bundle. Signing with
+# --deep can silently repair or replace nested identities, which makes release
+# identity drift harder to detect.
+codesign "${SIGN_OPTIONS[@]}" "$APP_DIR/Contents/Resources/aibarUpdateInstaller"
+codesign "${SIGN_OPTIONS[@]}" "$APP_DIR"
+codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
 echo "Done: $APP_DIR"

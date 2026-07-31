@@ -6,6 +6,7 @@ final class ScreenshotCoordinator {
     private let setChromeSuppressed: (Bool) -> Void
     private var captureProcess: Process?
     private var editor: ScreenshotEditorWindowController?
+    private var permissionFlow = ScreenCapturePermissionFlow()
 
     init(
         language: @escaping () -> AppLanguage,
@@ -21,12 +22,15 @@ final class ScreenshotCoordinator {
             return
         }
 
-        // TCC consent is associated with the app's bundle/signing identity,
-        // not copied by an updater. A correctly signed update keeps it; if a
-        // person previously denied Screen Recording, ask macOS again at the
-        // moment the feature is actually requested instead of failing later
-        // with an empty capture.
-        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+        switch permissionFlow.nextAction(hasAccess: CGPreflightScreenCaptureAccess()) {
+        case .capture:
+            break
+        case .requestAccess:
+            // The system request is the only UI shown on the first attempt.
+            // Presenting our own modal while TCC is prompting can put two
+            // permission surfaces in competition after an application update.
+            guard CGRequestScreenCaptureAccess() else { return }
+        case .showSettings:
             presentScreenRecordingPermissionError()
             return
         }
@@ -96,7 +100,35 @@ final class ScreenshotCoordinator {
         alert.informativeText = lang == .zh
             ? "请在系统设置中允许 aibar 进行屏幕录制，然后再试一次。"
             : "Allow aibar in System Settings > Privacy & Security > Screen Recording, then try again."
-        alert.addButton(withTitle: lang == .zh ? "好" : "OK")
-        alert.runModal()
+        alert.addButton(withTitle: lang == .zh ? "打开系统设置" : "Open System Settings")
+        alert.addButton(withTitle: lang == .zh ? "取消" : "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let settingsURL = URL(
+                string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+              )
+        else { return }
+        NSWorkspace.shared.open(settingsURL)
+    }
+}
+
+/// Keeps the TCC prompt and the app's recovery guidance mutually exclusive.
+/// A process gets one system request; later attempts route a denial to System
+/// Settings. A newly granted permission always takes precedence immediately.
+struct ScreenCapturePermissionFlow {
+    enum Action: Equatable {
+        case capture
+        case requestAccess
+        case showSettings
+    }
+
+    private var requestedAccess = false
+
+    mutating func nextAction(hasAccess: Bool) -> Action {
+        if hasAccess { return .capture }
+        guard requestedAccess else {
+            requestedAccess = true
+            return .requestAccess
+        }
+        return .showSettings
     }
 }

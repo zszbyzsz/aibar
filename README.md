@@ -4,7 +4,7 @@
 
 一个为 macOS 设计的本地 AI 使用情况仪表盘。aibar 把 Codex 的本地会话记录、配额和活动状态收进刘海下方与状态栏：需要时展开查看，不需要时保持安静。
 
-> 版本 0.1.7 · macOS 13 Ventura 或更高版本 · Apple Silicon
+> 版本 0.1.8 · macOS 13 Ventura 或更高版本 · Apple Silicon
 
 ![aibar dashboard](docs/images/dashboard-en.png)
 
@@ -56,9 +56,13 @@ brew update
 brew upgrade --cask aibar
 ```
 
+`v0.1.8` 及更早的安装包使用 Ad-hoc 签名，每个版本的 macOS 隐私身份都不同。
+迁移到首个 Developer ID 签名版本时，需要重新授予一次屏幕录制权限；之后使用同一
+Developer ID 发布的更新会继续复用该授权。
+
 #### 直接下载安装包
 
-在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.7.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
+在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.8.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
 
 请使用同一 Developer ID 签名的正式发布版，以便自动更新后保持屏幕录制授权。若 macOS 阻止首次启动，请在 Finder 中按住 Control 点击应用并选择“打开”；若仍被隔离，可执行：
 
@@ -106,10 +110,13 @@ swift test
 open dist/aibar.app
 ```
 
-发布自动更新版本时，请用同一个 Developer ID 证书签名：
+`build-app.sh` 默认生成仅用于本地开发的 Ad-hoc 签名应用；重新构建后 macOS 可能
+要求重新授权。正式版本必须通过发布脚本生成，它会拒绝 Ad-hoc 签名以及绑定到单次
+构建 CDHash 的身份：
 
 ```bash
-SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/build-app.sh
+SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+  ./scripts/package-release.sh 0.1.9
 ```
 
 ---
@@ -167,9 +174,14 @@ brew update
 brew upgrade --cask aibar
 ```
 
+Packages through `v0.1.8` are ad-hoc signed, so each version has a different
+macOS privacy identity. Moving to the first Developer ID signed release requires
+granting Screen Recording once more. Later releases signed by that same identity
+retain the grant.
+
 #### Download the app
 
-Download `aibar-0.1.7.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
+Download `aibar-0.1.8.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
 
 Use a release signed consistently with the same Developer ID to preserve Screen Recording consent through automatic updates. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. If it remains quarantined:
 
@@ -217,11 +229,14 @@ swift test
 open dist/aibar.app
 ```
 
-For a release that can update without resetting its privacy identity, sign
-every version with the same Developer ID certificate:
+`build-app.sh` creates an ad-hoc signed app for local development by default;
+macOS may request privacy access again after each rebuild. Production packages
+must use the release script, which rejects ad-hoc signatures and identities tied
+to a per-build CDHash:
 
 ```bash
-SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/build-app.sh
+SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+  ./scripts/package-release.sh 0.1.9
 ```
 
 ## License
