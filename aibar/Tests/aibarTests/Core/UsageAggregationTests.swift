@@ -39,8 +39,37 @@ final class UsageAggregationTests: XCTestCase {
         XCTAssertEqual(payload.monthToolCalls, 2)
         XCTAssertEqual(payload.monthFilesChanged, 3)
         XCTAssertEqual(payload.topProjects.first?.name, "aibar")
+        XCTAssertEqual(payload.topProjects.first?.models.map(\.model), ["gpt-test"])
+        XCTAssertEqual(payload.topProjects.first?.models.first?.tokens, 1_100_000)
         XCTAssertEqual(payload.monthCost, 2.5, accuracy: 0.000_001)
         XCTAssertEqual(payload.models.first?.apiEquivalentCost ?? 0, 2.5, accuracy: 0.000_001)
+    }
+
+    func testBuildPayloadKeepsProjectUsageForNinetyDaysWithoutExtendingMonthlyTotals() {
+        let calendar = Calendar(identifier: .gregorian)
+        let sixtyDaysAgo = calendar.date(byAdding: .day, value: -60, to: Date())!
+        let day = UsageAggregation.isoDateOnly(sixtyDaysAgo)
+        let primaryUsage = ["total_tokens": 600]
+        let secondaryUsage = ["total_tokens": 400]
+        let summary = FileSummary(
+            endedAt: Formatting.isoTimestamp(from: sixtyDaysAgo),
+            usage: ["total_tokens": 1_000],
+            usageByModel: ["gpt-primary": primaryUsage, "gpt-secondary": secondaryUsage],
+            dailyUsageByModel: [day: ["gpt-primary": primaryUsage, "gpt-secondary": secondaryUsage]],
+            limitsByKind: [:], planType: nil, planAt: nil, project: "older-project"
+        )
+
+        let payload = UsageAggregation.buildPayload(
+            cacheFiles: ["older.jsonl": CachedEntry(mtime: 0, size: 1, summary: summary)],
+            prices: [:], priceStatus: "fallback", defaultPlan: "Codex",
+            normalizeModel: { $0 ?? "unknown" }
+        )
+
+        XCTAssertEqual(payload.monthTokens, 0)
+        XCTAssertEqual(payload.topProjects.first?.name, "older-project")
+        XCTAssertEqual(payload.topProjects.first?.tokens, 1_000)
+        XCTAssertEqual(payload.topProjects.first?.models.map(\.model), ["gpt-primary", "gpt-secondary"])
+        XCTAssertEqual(payload.topProjects.first?.models.map(\.tokens), [600, 400])
     }
 
     /// Cache reads and cache writes are slices *inside* `input_tokens`, each

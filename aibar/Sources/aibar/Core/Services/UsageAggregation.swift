@@ -18,12 +18,16 @@ enum UsageAggregation {
         let calendar = Calendar(identifier: .gregorian)
         let todayStart = calendar.startOfDay(for: now)
         let monthStart = calendar.date(byAdding: .day, value: -29, to: todayStart)!
+        // Projects are an attribution view rather than a billing-period total,
+        // so retain a longer history here. The month cost/token/model totals
+        // deliberately continue to use `monthStart` below.
+        let projectStart = calendar.date(byAdding: .day, value: -89, to: todayStart)!
         // The heatmap spans further back than the "30-day" totals below it —
         // otherwise, at 30 days it only ever fills about a week's worth of
         // rows and leaves the card looking half-empty next to the taller
         // session/weekly rings beside it. Kept separate from `monthStart` so
-        // `monthCost`/`monthTokens`/the model & project breakdowns stay a
-        // true 30-day rollup regardless of how far back the chart reaches.
+        // `monthCost`/`monthTokens`/the global model breakdown stay a true
+        // 30-day rollup regardless of how far back the chart reaches.
         let heatmapDays = 112
         let heatmapStart = calendar.date(byAdding: .day, value: -(heatmapDays - 1), to: todayStart)!
         let todayKey = isoDateOnly(todayStart)
@@ -38,7 +42,17 @@ enum UsageAggregation {
         var latestSessionAt = Date.distantPast
         var monthToolCalls = 0
         var monthFilesChanged = 0
-        var projectTokens: [String: Int] = [:]
+        // Unlike the overall model list, this keeps the model dimension nested
+        // under each project. A session has one cwd but can switch models, so
+        // recording only `projectTokens` here would make the breakdown
+        // impossible to reconstruct later.
+        var projectUsageByModel: [String: [String: Int]] = [:]
+
+        func addProjectUsage(_ usageByModel: [String: [String: Int]], project: String) {
+            for (model, usage) in usageByModel {
+                projectUsageByModel[project, default: [:]][model, default: 0] += usage["total_tokens"] ?? 0
+            }
+        }
 
         for entry in cacheFiles.values {
             let summary = entry.summary
@@ -93,9 +107,9 @@ enum UsageAggregation {
                     merge(byModel, into: &monthByModel)
                     monthToolCalls += summary.toolCallCount
                     monthFilesChanged += summary.filesChangedCount
-                    if let project = summary.project {
-                        projectTokens[project, default: 0] += usage["total_tokens"] ?? 0
-                    }
+                }
+                if ended >= projectStart, let project = summary.project {
+                    addProjectUsage(byModel, project: project)
                 }
                 if ended >= todayStart { merge(byModel, into: &todayByModel) }
                 continue
@@ -106,9 +120,9 @@ enum UsageAggregation {
                 if eventDay >= heatmapStart { merge(eventUsageByModel, into: &dailyByDate[dateKey, default: [:]]) }
                 if eventDay >= monthStart {
                     merge(eventUsageByModel, into: &monthByModel)
-                    if let project = summary.project {
-                        projectTokens[project, default: 0] += eventUsageByModel.values.reduce(0) { $0 + ($1["total_tokens"] ?? 0) }
-                    }
+                }
+                if eventDay >= projectStart, let project = summary.project {
+                    addProjectUsage(eventUsageByModel, project: project)
                 }
                 if dateKey == todayKey { merge(eventUsageByModel, into: &todayByModel) }
             }
@@ -205,10 +219,21 @@ enum UsageAggregation {
         let monthCachedTokens = monthByModel.values.reduce(0) { $0 + ($1["cached_input_tokens"] ?? 0) }
         let todayInputTokens = todayByModel.values.reduce(0) { $0 + ($1["input_tokens"] ?? 0) }
         let todayCachedTokens = todayByModel.values.reduce(0) { $0 + ($1["cached_input_tokens"] ?? 0) }
-        let topProjects = projectTokens
-            .sorted { $0.value > $1.value }
-            .prefix(12)
-            .map { ProjectUsage(name: $0.key, tokens: $0.value) }
+        var projects: [ProjectUsage] = []
+        for (project, usageByModel) in projectUsageByModel {
+            var models: [ProjectModelUsage] = []
+            for (model, usage) in usageByModel {
+                models.append(ProjectModelUsage(model: model, tokens: usage))
+            }
+            models.sort { $0.tokens == $1.tokens ? $0.model < $1.model : $0.tokens > $1.tokens }
+            projects.append(ProjectUsage(
+                name: project,
+                tokens: models.reduce(0) { $0 + $1.tokens },
+                models: models
+            ))
+        }
+        projects.sort { $0.tokens == $1.tokens ? $0.name < $1.name : $0.tokens > $1.tokens }
+        let topProjects = Array(projects.prefix(12))
 
         var modelBreakdown: [ModelUsage] = []
         for (model, usage) in monthByModel.sorted(by: { ($0.value["total_tokens"] ?? 0) > ($1.value["total_tokens"] ?? 0) }) {

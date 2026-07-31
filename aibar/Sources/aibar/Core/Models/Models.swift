@@ -127,6 +127,16 @@ struct ProjectUsage: Identifiable {
     var id: String { name }
     var name: String
     var tokens: Int
+    /// Models that contributed to this project's 90-day token total, ordered
+    /// from most to least used. Keeping this alongside the project total lets
+    /// the dashboard explain a project's spend without needing another scan.
+    var models: [ProjectModelUsage] = []
+}
+
+struct ProjectModelUsage: Identifiable {
+    var id: String { model }
+    var model: String
+    var tokens: Int
 }
 
 /// A deliberately narrow, privacy-preserving view of a recently active Codex

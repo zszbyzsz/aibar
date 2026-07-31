@@ -49,6 +49,19 @@ enum L {
     static func noProjectData(_ lang: AppLanguage) -> String {
         lang == .zh ? "暂无项目路径数据" : "No project path data yet"
     }
+    static func projectModelBreakdownTitle(_ lang: AppLanguage) -> String {
+        lang == .zh ? "模型占比" : "Model share"
+    }
+    static func projectModelBreakdownHint(_ lang: AppLanguage) -> String {
+        lang == .zh ? "点击查看模型 token 占比" : "Click to view model token shares"
+    }
+    static func projectModelShare(_ lang: AppLanguage, tokens: String, percent: Double) -> String {
+        let percentage = String(format: "%.1f", percent)
+        return "\(tokens) · \(percentage)%"
+    }
+    static func projectUsageAccessibilityLabel(_ lang: AppLanguage, project: String, tokens: String) -> String {
+        lang == .zh ? "项目 \(project)，\(tokens) token" : "Project \(project), \(tokens) tokens"
+    }
 
     static func weeklyLabel(_ lang: AppLanguage, isMonthly: Bool) -> String {
         if lang == .zh { return isMonthly ? "每月" : "每周" }
@@ -82,7 +95,7 @@ enum L {
         lang == .zh ? "按模型统计" : "By Model"
     }
     static func topProjectsTitle(_ lang: AppLanguage) -> String {
-        lang == .zh ? "最活跃项目（30 天）" : "Top Projects (30d)"
+        lang == .zh ? "最活跃项目（90 天）" : "Top Projects (90d)"
     }
     static func activityTitle(_ lang: AppLanguage, project: String) -> String {
         lang == .zh ? "正在处理 · \(project)" : "Working · \(project)"

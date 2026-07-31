@@ -250,9 +250,18 @@ final class UsageStore: ObservableObject {
             ],
             daily: daily,
             topProjects: [
-                ProjectUsage(name: "studio-app", tokens: 9_800_000),
-                ProjectUsage(name: "design-system", tokens: 5_600_000),
-                ProjectUsage(name: "swift-lab", tokens: 1_900_000),
+                ProjectUsage(name: "studio-app", tokens: 9_800_000, models: [
+                    ProjectModelUsage(model: "gpt-5.6-sol", tokens: 7_400_000),
+                    ProjectModelUsage(model: "gpt-5.6-terra", tokens: 2_400_000),
+                ]),
+                ProjectUsage(name: "design-system", tokens: 5_600_000, models: [
+                    ProjectModelUsage(model: "gpt-5.6-terra", tokens: 4_200_000),
+                    ProjectModelUsage(model: "gpt-5.6-sol", tokens: 1_400_000),
+                ]),
+                ProjectUsage(name: "swift-lab", tokens: 1_900_000, models: [
+                    ProjectModelUsage(model: "gpt-5.5", tokens: 1_400_000),
+                    ProjectModelUsage(model: "gpt-5.6-terra", tokens: 500_000),
+                ]),
             ],
             activeProject: ProjectActivity(
                 project: "studio-app", model: "gpt-5.6-sol", phase: .editing,
