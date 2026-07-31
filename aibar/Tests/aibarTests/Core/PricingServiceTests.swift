@@ -2,6 +2,16 @@ import XCTest
 @testable import aibar
 
 final class PricingServiceTests: XCTestCase {
+    func testColdStartPricesReturnFallbackWithoutNetwork() async {
+        let service = PricingService()
+
+        let result = await service.cachedOrFallbackPrices()
+
+        XCTAssertEqual(result.status, "fallback")
+        XCTAssertEqual(result.models["gpt-5.6-sol"]?.input, 5)
+        XCTAssertEqual(result.models.count, PricingService.modelPages.count)
+    }
+
     func testGPT56FallbackRatesUseCurrentAPIPricingAndCacheWritePremium() {
         let sol = PricingService.fallbackPrices["gpt-5.6-sol"]
         XCTAssertEqual(sol?.input, 5)

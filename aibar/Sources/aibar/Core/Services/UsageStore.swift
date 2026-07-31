@@ -85,7 +85,11 @@ final class UsageStore: ObservableObject {
         guard !hasStarted else { return }
         hasStarted = true
         guard !demoMode else { return }
-        Task { await refresh() }
+        // A fresh install has no warm in-memory price cache yet. Start the
+        // official-price request right away, but do not make local session
+        // data wait for it: `refresh(eagerly:)` publishes a fallback-priced
+        // scan first and replaces it as soon as the live rates arrive.
+        Task { await refresh(eagerly: true) }
         timer = Timer.scheduledTimer(withTimeInterval: Self.refreshInterval, repeats: true) { [weak self] _ in
             Task { await self?.refresh() }
         }
@@ -144,6 +148,16 @@ final class UsageStore: ObservableObject {
     }
 
     func refresh() async {
+        await refresh(eagerly: false)
+    }
+
+    /// The startup path must show all locally available usage without waiting
+    /// for remote model-price pages. It therefore starts that fetch in parallel
+    /// and performs one cheap cached/fallback-priced scan immediately. Once the
+    /// fetch completes, it re-aggregates from the scanner's on-disk summaries,
+    /// so no session transcript has to be parsed a second time in the usual
+    /// case.
+    private func refresh(eagerly: Bool) async {
         if demoMode {
             payload = Self.demoPayload()
             return
@@ -154,17 +168,38 @@ final class UsageStore: ObservableObject {
         let currentProvider = provider
         switch currentProvider {
         case .codex:
+            if eagerly {
+                async let refreshedPrices = codexPricing.prices()
+                let immediatePrices = await codexPricing.cachedOrFallbackPrices()
+                var immediateResult = await codexPayload(
+                    prices: immediatePrices.models,
+                    status: immediatePrices.status
+                )
+                immediateResult.activeProject = codexActivityMonitor.currentActivity()
+                guard provider == currentProvider else { return }
+                payload = immediateResult
+
+                let latestPrices = await refreshedPrices
+                guard provider == currentProvider else { return }
+                // If the fallback was all the network could provide, its
+                // already-published payload is complete. Otherwise publish
+                // the same local records with the newly verified rates.
+                guard latestPrices.status != "fallback" else { return }
+                var refreshedResult = await codexPayload(
+                    prices: latestPrices.models,
+                    status: latestPrices.status
+                )
+                refreshedResult.activeProject = codexActivityMonitor.currentActivity()
+                guard provider == currentProvider else { return }
+                payload = refreshedResult
+                return
+            }
+
             let (prices, status) = await codexPricing.prices()
-            let scanner = codexScanner
-            var result = await Task.detached(priority: .userInitiated) {
-                (scanner.scan(prices: prices, priceStatus: status), SubscriptionInfo.read())
-            }.value
-            result.0.pricingRates = prices
-            result.0.subscriptionPlan = result.1?.planType
-            result.0.subscriptionActiveUntil = result.1?.activeUntil
-            result.0.activeProject = codexActivityMonitor.currentActivity()
+            var result = await codexPayload(prices: prices, status: status)
+            result.activeProject = codexActivityMonitor.currentActivity()
             guard provider == currentProvider else { return }
-            payload = result.0
+            payload = result
         case .claudeCode:
             let (prices, status) = await claudePricing.prices()
             let scanner = claudeScanner
@@ -188,6 +223,21 @@ final class UsageStore: ObservableObject {
             guard provider == currentProvider else { return }
             payload = TraeCNUsageScanner.scan(lang: language)
         }
+    }
+
+    /// Keeps the cold-start and ordinary paths on precisely the same local
+    /// aggregation logic. `UsageScanner` persists per-file summaries, so the
+    /// second call after a live pricing response normally only reads metadata
+    /// and recalculates totals from that cache.
+    private func codexPayload(prices: [String: ModelPrice], status: String) async -> UsagePayload {
+        let scanner = codexScanner
+        var result = await Task.detached(priority: .userInitiated) {
+            (scanner.scan(prices: prices, priceStatus: status), SubscriptionInfo.read())
+        }.value
+        result.0.pricingRates = prices
+        result.0.subscriptionPlan = result.1?.planType
+        result.0.subscriptionActiveUntil = result.1?.activeUntil
+        return result.0
     }
 
     /// Hits the live `/api/oauth/usage` endpoint — call this once per actual

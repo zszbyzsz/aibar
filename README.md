@@ -4,7 +4,7 @@
 
 一个为 macOS 设计的本地 AI 使用情况仪表盘。aibar 把 Codex 的本地会话记录、配额和活动状态收进刘海下方与状态栏：需要时展开查看，不需要时保持安静。
 
-> 版本 0.1.2 · macOS 13 Ventura 或更高版本 · Apple Silicon
+> 版本 0.1.4 · macOS 13 Ventura 或更高版本 · Apple Silicon
 
 ![aibar dashboard](docs/images/dashboard-en.png)
 
@@ -20,6 +20,7 @@
 - **分享卡片**：从仪表盘生成可分享的使用情况卡片，并选择不同的视觉样式。
 - **安全自动更新**：启动时及之后每 6 小时检查 GitHub Releases。右键状态栏图标后选择“检查更新”，若有可用版本，会在 SHA-256 校验完成后自动安装并重启。更新包还必须和当前应用拥有相同的 Bundle ID 与 Developer ID 签名，才能保留 macOS 的屏幕录制等隐私授权；签名不一致时会拒绝自动替换，避免静默失去授权。
 - **本地优先**：Codex 的会话与活动数据在本机读取、聚合。aibar 不上传提示词、响应内容或文件内容；模型定价信息会从公开价格页读取并在本地缓存，显示金额为 API 等价估算，不是账单。
+- **主动预加载**：启动（包括首次安装后首次打开）会立即读取本地会话，并并行刷新模型定价；无需先打开仪表盘即可尽快看到完整数据。
 
 ### 安装
 
@@ -41,7 +42,7 @@ brew upgrade --cask aibar
 
 #### 直接下载安装包
 
-在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.2.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
+在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.4.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
 
 请使用同一 Developer ID 签名的正式发布版，以便自动更新后保持屏幕录制授权。若 macOS 阻止首次启动，请在 Finder 中按住 Control 点击应用并选择“打开”；若仍被隔离，可执行：
 
@@ -113,6 +114,7 @@ aibar is a local-first macOS dashboard for AI coding activity. It turns Codex se
 - **Share cards** — Generate a shareable usage summary card with selectable styles.
 - **Safe automatic updates** — Check GitHub Releases at launch and every six hours. Choose **Check for Updates** from the menu-bar icon’s right-click menu to download, verify, install, and relaunch when an update is available. Automatic replacement requires the same bundle ID and Developer ID signing identity, preserving macOS privacy consent such as Screen Recording; a mismatched signature is refused rather than silently changing that identity.
 - **Local first** — Session and activity data are read and aggregated on your Mac. aibar does not upload prompts, responses, or file contents. Public pricing data may be fetched and cached locally; displayed prices are API-equivalent estimates, not invoices.
+- **Eager loading** — At launch, including the first launch after installation, aibar immediately reads local sessions and refreshes model pricing in parallel, so the dashboard does not need to be opened before data begins loading.
 
 ### Install
 
@@ -132,7 +134,7 @@ brew upgrade --cask aibar
 
 #### Download the app
 
-Download `aibar-0.1.2.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
+Download `aibar-0.1.4.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
 
 Use a release signed consistently with the same Developer ID to preserve Screen Recording consent through automatic updates. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. If it remains quarantined:
 

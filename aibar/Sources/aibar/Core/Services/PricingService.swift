@@ -29,6 +29,14 @@ actor PricingService {
     private var cachedPrices: [String: ModelPrice] = [:]
     private var cachedStatus = "fallback"
 
+    /// Returns something usable without waiting for the network. This lets a
+    /// first-run dashboard render its local usage immediately while `prices()`
+    /// refreshes the official rates in parallel.
+    func cachedOrFallbackPrices() -> (models: [String: ModelPrice], status: String) {
+        guard !cachedPrices.isEmpty else { return (Self.fallbackPrices, "fallback") }
+        return (cachedPrices, cachedStatus == "live" ? "cached" : cachedStatus)
+    }
+
     /// Live-fetches current per-model $/1M-token rates (input, cached input, output) from
     /// each model's official doc page, refreshing at most every 12h; falls back to the last
     /// verified values when offline so the popover never shows a blank price.
