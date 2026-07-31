@@ -12,6 +12,46 @@ struct CodexActivityMonitor {
     static let activeWindow: TimeInterval = 120
 
     private let databaseURL: URL
+    private let rolloutStartCache = RolloutStartCache()
+
+    /// Polling happens on detached utility tasks. Cache the last resolved turn
+    /// boundary per rollout so an old, multi-megabyte thread is scanned once;
+    /// later polls only inspect bytes appended since that scan.
+    private final class RolloutStartCache: @unchecked Sendable {
+        private struct Entry {
+            let fileSize: UInt64
+            let startedAt: Date?
+        }
+
+        private var entries: [String: Entry] = [:]
+        private let lock = NSLock()
+
+        func latestTaskStartedAt(path: String, handle: FileHandle, fileSize: UInt64) -> Date? {
+            lock.lock()
+            defer { lock.unlock() }
+
+            let previous = entries[path]
+            if previous?.fileSize == fileSize { return previous?.startedAt }
+
+            // If the file only grew, the previous result remains valid unless
+            // the appended region contains a newer task boundary. Include the
+            // old trailing newline so the first new JSONL record is complete.
+            let scanFloor: UInt64
+            if let previous, fileSize > previous.fileSize {
+                scanFloor = previous.fileSize > 0 ? previous.fileSize - 1 : 0
+            } else {
+                scanFloor = 0
+            }
+            let appendedStart = CodexActivityMonitor.latestTaskStartedAt(
+                in: handle,
+                fileSize: fileSize,
+                scanFloor: scanFloor
+            )
+            let resolved = appendedStart ?? (scanFloor > 0 ? previous?.startedAt : nil)
+            entries[path] = Entry(fileSize: fileSize, startedAt: resolved)
+            return resolved
+        }
+    }
 
     init() {
         let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
@@ -124,7 +164,8 @@ struct CodexActivityMonitor {
         childIDsByParent: [String: [String]],
         now: Date
     ) -> CodexActivityState {
-        let (ownOutcome, contextTokens) = rolloutOutcome(forRolloutAt: row.rolloutPath)
+        let ownSnapshot = rolloutSnapshot(forRolloutAt: row.rolloutPath)
+        let ownOutcome = ownSnapshot.outcome
         var lastActivity = row.updatedAt ?? .distantPast
         var delegateWorking = false
 
@@ -136,7 +177,7 @@ struct CodexActivityMonitor {
             // skipping it keeps the per-poll rollout reads bounded to the
             // handful of delegates that are genuinely live.
             guard now.timeIntervalSince(childUpdated) <= Self.activeWindow else { continue }
-            if case .active = rolloutOutcome(forRolloutAt: child.rolloutPath).outcome {
+            if case .active = rolloutSnapshot(forRolloutAt: child.rolloutPath).outcome {
                 delegateWorking = true
             }
         }
@@ -149,14 +190,17 @@ struct CodexActivityMonitor {
                 model: row.model,
                 phase: phase,
                 lastActivityAt: lastActivity,
-                startedAt: row.createdAt ?? lastActivity,
+                // Threads survive across many submitted tasks. Measuring from
+                // `created_at_ms` made a newly submitted task in an old thread
+                // immediately appear hours or days old.
+                startedAt: ownSnapshot.startedAt ?? row.createdAt ?? lastActivity,
                 // Falls back to the database's `tokens_used`, which is a
                 // lifetime cumulative sum across every turn ever sent for
                 // this thread (often tens of millions of tokens) — not the
                 // conversation's actual current context size. That fallback
                 // only fires before the rollout's first `token_count` event
                 // has landed.
-                sessionTokens: contextTokens ?? row.tokensUsed,
+                sessionTokens: ownSnapshot.contextTokens ?? row.tokensUsed,
                 sandboxPolicy: row.sandboxPolicy,
                 approvalMode: row.approvalMode,
                 threadID: row.id
@@ -303,16 +347,20 @@ struct CodexActivityMonitor {
     /// that field is a lifetime sum across every turn this thread has ever
     /// sent, grows without bound over a long session, and does not reflect
     /// what's actually sitting in context right now.
-    private func rolloutOutcome(forRolloutAt path: String?) -> (outcome: RolloutOutcome, contextTokens: Int?) {
+    private func rolloutSnapshot(
+        forRolloutAt path: String?
+    ) -> (outcome: RolloutOutcome, contextTokens: Int?, startedAt: Date?) {
         guard let path, FileManager.default.fileExists(atPath: path),
               let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path))
-        else { return (.active(.working), nil) }
+        else { return (.active(.working), nil, nil) }
         defer { try? handle.close() }
 
         let tailSize: UInt64 = 64 * 1_024
         let fileSize = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: fileSize > tailSize ? fileSize - tailSize : 0)
-        guard let data = try? handle.readToEnd(), !data.isEmpty else { return (.active(.working), nil) }
+        guard let data = try? handle.readToEnd(), !data.isEmpty else {
+            return (.active(.working), nil, nil)
+        }
 
         var resolvedOutcome: RolloutOutcome?
         var contextTokens: Int?
@@ -352,6 +400,74 @@ struct CodexActivityMonitor {
 
             if resolvedOutcome != nil, contextTokens != nil { break }
         }
-        return (resolvedOutcome ?? .active(.working), contextTokens)
+        let outcome = resolvedOutcome ?? .active(.working)
+        let startedAt: Date?
+        if case .active = outcome {
+            startedAt = rolloutStartCache.latestTaskStartedAt(
+                path: path,
+                handle: handle,
+                fileSize: fileSize
+            )
+        } else {
+            startedAt = nil
+        }
+        return (outcome, contextTokens, startedAt)
+    }
+
+    /// Finds the current task's start without assuming it is inside the small
+    /// activity tail above. A single long response can put `task_started`
+    /// hundreds of kilobytes behind EOF, while the thread itself may be days
+    /// old. Reading backward in bounded chunks avoids loading a large rollout
+    /// all at once and stops at the first (therefore latest) matching event.
+    static func latestTaskStartedAt(inRolloutAt path: String) -> Date? {
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
+        defer { try? handle.close() }
+        guard let fileSize = try? handle.seekToEnd() else { return nil }
+        return latestTaskStartedAt(in: handle, fileSize: fileSize, scanFloor: 0)
+    }
+
+    private static func latestTaskStartedAt(
+        in handle: FileHandle,
+        fileSize: UInt64,
+        scanFloor: UInt64
+    ) -> Date? {
+        let chunkSize: UInt64 = 64 * 1_024
+        let marker = Data(#""task_started""#.utf8)
+        var upperBound = fileSize
+        var newerLineFragment = Data()
+
+        while upperBound > scanFloor {
+            let lowerBound = upperBound - scanFloor > chunkSize ? upperBound - chunkSize : scanFloor
+            try? handle.seek(toOffset: lowerBound)
+            guard var chunk = try? handle.read(upToCount: Int(upperBound - lowerBound)) else { return nil }
+            chunk.append(newerLineFragment)
+
+            let lines = chunk.split(separator: 0x0A, omittingEmptySubsequences: false)
+            let firstLineIsPartial = lowerBound > scanFloor
+            let completeLines = firstLineIsPartial ? lines.dropFirst() : lines[...]
+
+            for line in completeLines.reversed() {
+                guard line.range(of: marker) != nil,
+                      let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                      let payload = object["payload"] as? [String: Any],
+                      payload["type"] as? String == "task_started"
+                else { continue }
+
+                if let seconds = payload["started_at"] as? NSNumber, seconds.doubleValue > 0 {
+                    return Date(timeIntervalSince1970: seconds.doubleValue)
+                }
+                if let timestamp = object["timestamp"] as? String {
+                    return Formatting.parseISODate(timestamp)
+                }
+            }
+
+            if firstLineIsPartial, let first = lines.first {
+                newerLineFragment = Data(first)
+            } else {
+                newerLineFragment.removeAll(keepingCapacity: true)
+            }
+            upperBound = lowerBound
+        }
+        return nil
     }
 }

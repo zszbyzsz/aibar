@@ -144,10 +144,9 @@ struct ProjectActivity: Equatable {
     var model: String?
     var phase: Phase
     var lastActivityAt: Date
-    /// When this thread actually started (the DB's `created_at_ms`), not when
-    /// this app first noticed it — the displayed "running for" duration reads
-    /// off this, so it reflects the task's real elapsed runtime instead of
-    /// counting from whatever moment the dashboard happened to render.
+    /// When the currently running task started. A Codex thread can be reused
+    /// for many tasks, so this comes from the rollout's latest `task_started`
+    /// event rather than the thread's original database creation time.
     var startedAt: Date
     var sessionTokens: Int
     var sandboxPolicy: String
