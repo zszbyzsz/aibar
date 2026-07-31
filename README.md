@@ -4,7 +4,7 @@
 
 一个为 macOS 设计的本地 AI 使用情况仪表盘。aibar 把 Codex 的本地会话记录、配额和活动状态收进刘海下方与状态栏：需要时展开查看，不需要时保持安静。
 
-> 版本 0.1.1 · macOS 13 Ventura 或更高版本 · Apple Silicon
+> 版本 0.1.2 · macOS 13 Ventura 或更高版本 · Apple Silicon
 
 ![aibar dashboard](docs/images/dashboard-en.png)
 
@@ -41,7 +41,7 @@ brew upgrade --cask aibar
 
 #### 直接下载安装包
 
-在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.1.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
+在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.2.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
 
 该版本使用临时签名。若 macOS 阻止首次启动，请在 Finder 中按住 Control 点击应用并选择“打开”；若仍被隔离，可执行：
 
@@ -126,7 +126,7 @@ brew upgrade --cask aibar
 
 #### Download the app
 
-Download `aibar-0.1.1.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
+Download `aibar-0.1.2.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
 
 This release is ad-hoc signed. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. If it remains quarantined:
 

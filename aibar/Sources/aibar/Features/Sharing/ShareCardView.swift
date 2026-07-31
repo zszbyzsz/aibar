@@ -185,10 +185,11 @@ private struct StaticRingGauge: View {
     }
 
     private var ringColor: Color {
-        guard let remaining else { return style.mutedInk }
-        if remaining <= 10 { return Color(red: 1.000, green: 0.380, blue: 0.420) }
-        if remaining <= 30 { return Color(red: 1.000, green: 0.720, blue: 0.220) }
-        return style.accent
+        QuotaStatusPalette.color(
+            remaining: remaining,
+            normal: style.accent,
+            unavailable: style.mutedInk
+        )
     }
 
     private static let ringSize: CGFloat = 78

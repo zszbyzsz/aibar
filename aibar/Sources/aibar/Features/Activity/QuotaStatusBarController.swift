@@ -168,13 +168,14 @@ private struct QuotaSideReadoutView: View {
         remainingPercent.map { "\($0)%" } ?? ""
     }
 
-    /// Quiet by default; urgency is present without the neon, badge-like
-    /// treatment that competes with the activity capsule below.
+    /// Uses the same five-stage scale as the dashboard, so a color always
+    /// means the same remaining-quota range wherever it appears.
     private var readoutColor: Color {
-        guard let remainingPercent else { return .notchMutedInk }
-        if remainingPercent <= 10 { return Color(red: 1.000, green: 0.460, blue: 0.470) }
-        if remainingPercent <= 30 { return Color(red: 0.900, green: 0.700, blue: 0.370) }
-        return Color(red: 0.690, green: 0.740, blue: 0.800)
+        QuotaStatusPalette.color(
+            remaining: remainingPercent,
+            normal: .notchAccent,
+            unavailable: .notchMutedInk
+        )
     }
 
     /// The inside edge is deliberately square so the tab visually grows out

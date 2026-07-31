@@ -12,21 +12,23 @@ struct QuotaMeterView: View {
     /// card, blown up" rather than a random decoration.
     var icon: String = "gauge"
     @Environment(\.appLanguage) private var lang
+    /// Kept separate from the water level so the ring can always draw from
+    /// zero to the current value, including on its first appearance.
+    @State private var animatedRingProgress: CGFloat = 0
 
     private var remaining: Int? {
         guard let used = limit?.usedPercent else { return nil }
         return max(0, Int((100 - used).rounded()))
     }
 
-    /// Same urgency logic as the subscription badge elsewhere: plenty left
-    /// reads in the accent color, a shrinking cushion earns amber, and a
-    /// near-empty window turns red — the ring's color carries that signal
-    /// at a glance, before anyone reads the number.
+    /// Five colors turn the remaining quota into a quick visual scale: blue,
+    /// green, yellow, orange, then red as the available cushion shrinks.
     private var ringColor: Color {
-        guard let remaining else { return Color.notchMutedInk }
-        if remaining <= 10 { return Color(red: 1.000, green: 0.380, blue: 0.420) }
-        if remaining <= 30 { return Color(red: 1.000, green: 0.720, blue: 0.220) }
-        return Color.notchAccent
+        QuotaStatusPalette.color(
+            remaining: remaining,
+            normal: .notchAccent,
+            unavailable: .notchMutedInk
+        )
     }
 
     private static let ringSize: CGFloat = 60
@@ -66,10 +68,9 @@ struct QuotaMeterView: View {
                             .clipShape(Circle())
                     }
                     Circle()
-                        .trim(from: 0, to: CGFloat(remaining ?? 0) / 100)
+                        .trim(from: 0, to: animatedRingProgress)
                         .stroke(ringColor, style: StrokeStyle(lineWidth: Self.ringWidth, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                        .animation(.easeOut(duration: 0.5), value: remaining)
                     // Left empty when there's data — the big numeral beside the
                     // ring is the number to read; duplicating it in miniature
                     // inside the ring too would just compete with it.
@@ -116,6 +117,23 @@ struct QuotaMeterView: View {
                 Spacer(minLength: 0)
             }
         }
+        .onAppear {
+            // Deferring the state change lets SwiftUI commit the empty ring
+            // first, so the visible sweep begins at 0 rather than appearing
+            // already filled on the initial render.
+            animatedRingProgress = 0
+            let targetProgress = CGFloat(remaining ?? 0) / 100
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.6)) {
+                    animatedRingProgress = targetProgress
+                }
+            }
+        }
+        .onChange(of: remaining) { newRemaining in
+            withAnimation(.easeOut(duration: 0.6)) {
+                animatedRingProgress = CGFloat(newRemaining ?? 0) / 100
+            }
+        }
     }
 }
 
@@ -148,6 +166,28 @@ private struct WaterWaveShape: Shape {
     }
 }
 
+/// A narrow moving glint along the waterline. It is intentionally a separate
+/// shape from the fill, so the liquid keeps a legible surface even at low
+/// opacity and the highlight can drift without affecting the fill level.
+private struct WaterWaveLine: Shape {
+    var level: CGFloat
+    var phase: CGFloat
+    var amplitude: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let baseY = rect.height * (1 - level)
+        var path = Path()
+        var x: CGFloat = 0
+        path.move(to: CGPoint(x: x, y: baseY + amplitude * sin(phase)))
+        while x <= rect.width {
+            let y = baseY + amplitude * sin((x / rect.width) * 4 * .pi + phase)
+            path.addLine(to: CGPoint(x: x, y: y))
+            x += 2
+        }
+        return path
+    }
+}
+
 /// The rising fill inside `QuotaMeterView`'s ring — a genuine ripple, not a
 /// flat block: two wave layers at slightly different phase/amplitude drift
 /// continuously via `TimelineView(.animation)`, which is what keeps the
@@ -156,10 +196,10 @@ private struct WaterWaveShape: Shape {
 private struct RingWaterFill: View {
     var percent: Int
     var color: Color
-    /// Driven by `withAnimation` on `percent` changes only — kept separate
-    /// from `phase`, which `TimelineView` already updates every frame on its
-    /// own, so a quota refresh eases the water level without touching (or
-    /// being fought by) the continuous ripple.
+    /// Driven by `withAnimation` on appearance and `percent` changes — kept
+    /// separate from `phase`, which `TimelineView` already updates every
+    /// frame on its own, so a quota refresh eases the water level without
+    /// touching (or being fought by) the continuous ripple.
     @State private var animatedLevel: CGFloat = 0
 
     private var targetLevel: CGFloat { CGFloat(max(0, min(100, percent))) / 100 }
@@ -169,14 +209,48 @@ private struct RingWaterFill: View {
             let t = context.date.timeIntervalSinceReferenceDate
             ZStack {
                 WaterWaveShape(level: animatedLevel, phase: CGFloat(t * 1.3), amplitude: 2.2)
-                    .fill(color.opacity(0.22))
+                    .fill(color.opacity(0.36))
                 WaterWaveShape(level: animatedLevel, phase: CGFloat(t * 1.7) + .pi / 2, amplitude: 1.4)
                     .fill(
-                        LinearGradient(colors: [color.opacity(0.55), color.opacity(0.26)], startPoint: .top, endPoint: .bottom)
+                        LinearGradient(
+                            stops: [
+                                .init(color: color.opacity(0.88), location: 0),
+                                .init(color: color.opacity(0.56), location: 0.38),
+                                .init(color: color.opacity(0.22), location: 1)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                // A restrained specular line gives the wave a living surface
+                // rather than making the whole fill pulse or bounce.
+                WaterWaveLine(level: animatedLevel, phase: CGFloat(t * 1.3), amplitude: 1.1)
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                .clear,
+                                Color.white.opacity(0.62),
+                                color.opacity(0.82),
+                                .clear
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ),
+                        style: StrokeStyle(lineWidth: 1.15, lineCap: .round)
                     )
             }
         }
-        .onAppear { animatedLevel = targetLevel }
+        .onAppear {
+            // Start at the bottom and defer the target assignment by one run
+            // loop so the initial empty-water frame is actually rendered.
+            animatedLevel = 0
+            let initialLevel = self.targetLevel
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.6)) {
+                    animatedLevel = initialLevel
+                }
+            }
+        }
         .onChange(of: percent) { _ in
             withAnimation(.easeOut(duration: 0.6)) { animatedLevel = targetLevel }
         }

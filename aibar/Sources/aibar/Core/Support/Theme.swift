@@ -38,6 +38,27 @@ extension Color {
     static let notchTrack = Color.white.opacity(0.08)
 }
 
+/// Shared five-stage quota palette. Keeping the thresholds here ensures the
+/// live dashboard and its exported share card communicate the same urgency.
+enum QuotaStatusPalette {
+    static func color(remaining: Int?, normal: Color, unavailable: Color) -> Color {
+        guard let remaining else { return unavailable }
+
+        switch remaining {
+        case ...10:
+            return Color(red: 1.000, green: 0.380, blue: 0.420) // urgent red
+        case ...25:
+            return Color(red: 1.000, green: 0.580, blue: 0.180) // orange
+        case ...45:
+            return Color(red: 1.000, green: 0.800, blue: 0.220) // yellow
+        case ...70:
+            return Color(red: 0.220, green: 0.840, blue: 0.510) // green
+        default:
+            return normal // blue / style accent
+        }
+    }
+}
+
 /// Shared corner language for every panel that hangs from the physical notch
 /// — the hover dashboard (`NotchWindowController`) and the always-on
 /// activity capsule (`ActivityStatusBarController`) both draw their
