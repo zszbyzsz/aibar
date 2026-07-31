@@ -69,11 +69,9 @@ struct ModelPrice: Codable {
     var input: Double
     var cachedInput: Double
     var output: Double
-    /// $/1M tokens for writing a prompt into the cache. OpenAI never bills this
-    /// separately (its automatic caching charges the write at the normal input
-    /// rate and reports `cache_write_input_tokens: 0`), so it defaults to the
-    /// input rate; Anthropic bills it at a premium over input and reports it as
-    /// its own field, which is why it can't just be folded into `input`.
+    /// $/1M tokens for writing a prompt into the cache. Most models charge the
+    /// normal input rate; GPT-5.6 charges 1.25× input. Anthropic has its own
+    /// premium cache-write rate, so this cannot be folded into `input`.
     var cacheWrite: Double
     var source: String
     var status: String

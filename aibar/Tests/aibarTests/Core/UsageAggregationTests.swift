@@ -88,8 +88,8 @@ final class UsageAggregationTests: XCTestCase {
         XCTAssertEqual(payload.monthCost, 2.05, accuracy: 0.000_001)
     }
 
-    /// OpenAI reports no cache writes and bills none, so a price table that
-    /// leaves `cacheWrite` unset must not change what those models cost.
+    /// A price table that leaves `cacheWrite` unset retains the conventional
+    /// behavior of charging cache writes at the normal input rate.
     func testCacheWriteRateDefaultsToInputRateWhenUnspecified() {
         let price = ModelPrice(input: 3, cachedInput: 0.3, output: 15, source: "test", status: "live")
         XCTAssertEqual(price.cacheWrite, 3)

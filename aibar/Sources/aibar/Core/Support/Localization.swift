@@ -145,12 +145,14 @@ enum L {
     }
 
     static func footnotePriced(_ lang: AppLanguage) -> String {
-        lang == .zh ? "含 cache 折扣价，按真实 token 计费。" : "Includes cache-hit discounts, billed by actual tokens."
+        lang == .zh
+            ? "含 cache 读取折扣及写入费率，按真实 token 计费。"
+            : "Includes cache-read discounts and cache-write pricing, billed by actual tokens."
     }
     static func footnoteUnpriced(_ lang: AppLanguage, models: String) -> String {
         lang == .zh
-            ? "含 cache 折扣价；\(models) 未定价，仅统计 token。"
-            : "Includes cache-hit discounts; \(models) unpriced, token-only."
+            ? "含 cache 读取折扣及写入费率；\(models) 未定价，仅统计 token。"
+            : "Includes cache-read discounts and cache-write pricing; \(models) unpriced, token-only."
     }
 
     static func refreshNow(_ lang: AppLanguage) -> String { lang == .zh ? "立即刷新" : "Refresh Now" }
