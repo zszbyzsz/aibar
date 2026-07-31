@@ -180,12 +180,14 @@ enum CodexActivityState {
 }
 
 /// What a single row of the always-on capsule (`ActivityStatusBarController`)
-/// is showing. Distinct from `CodexActivityState`: a finished run first appears
-/// as a prominent announcement, then lingers at the end of the running list
-/// for up to two minutes so it does not vanish the instant the sound plays.
+/// is showing. Distinct from `CodexActivityState`: completion rows can be
+/// retained, consumed, or grouped into an all-completed summary.
 enum ActivityCapsuleDisplay: Equatable {
     case active(ProjectActivity)
     case completed(project: String, outcome: ActivityOutcome)
+    /// Collapsed entry shown when several projects have all finished. Clicking
+    /// it reveals the individual completion rows underneath.
+    case completionSummary(count: Int)
     case update(AppUpdateNotice)
 }
 

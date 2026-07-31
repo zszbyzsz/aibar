@@ -9,8 +9,8 @@ import SwiftUI
 /// appears the moment a task starts and a distinct chime plays the moment one
 /// ends. Collapsed, only the single most relevant row shows; hovering pulls
 /// the rest of the stack down — every other project currently running, up to
-/// `maxRunningRows` of them. Clicking any pill brings Codex itself to the
-/// front.
+/// `maxRunningRows` of them. Clicking a task brings Codex to the front;
+/// clicking an all-completed summary reveals the finished task list.
 @MainActor
 final class ActivityStatusBarController: NSObject, ObservableObject {
     private let panel: NSPanel
@@ -51,8 +51,16 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// `retainedCompletions` at the end of the expanded running list.
     private var completedAnnouncement: RetainedCompletion?
     /// Completed tasks kept behind the running rows for at most two minutes.
-    /// This shelf is cleared as soon as no running projects remain.
+    /// When the last running task finishes, the remaining shelf becomes the
+    /// 30-second all-completed summary instead of being discarded.
     private var retainedCompletions: [RetainedCompletion] = []
+    /// True while the final, all-tasks-completed state owns the capsule. With
+    /// one completion it shows that project directly; with several it shows
+    /// a compact summary until clicked.
+    private var isAllCompletedPresentationActive = false
+    /// Clicking the multi-completion summary pins its detail rows open until
+    /// they are consumed individually or the user clicks outside the panel.
+    private var isCompletionReviewExpanded = false
     /// Latest repository update discovered by the six-hour checker. It is
     /// appended only while task activity already makes the capsule visible.
     private var updateNotice: AppUpdateNotice?
@@ -81,6 +89,11 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// expiry time. Polling would eventually do this too, but an exact timer
     /// prevents the row lingering for another expanded 10-second poll cycle.
     private var retentionClearWorkItem: DispatchWorkItem?
+    /// Passive all-completed state expires after 30 seconds. Entering the
+    /// explicit review state cancels this timer.
+    private var allCompletedClearWorkItem: DispatchWorkItem?
+    private var localOutsideClickMonitor: Any?
+    private var globalOutsideClickMonitor: Any?
     /// A short grace period before actually collapsing after the pointer
     /// leaves — mirrors `NotchWindowController.scheduleAutoClose`'s reasoning:
     /// enough slack to not flicker shut on a momentary gap, short enough to
@@ -204,8 +217,11 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         pollTimer?.invalidate()
         announcementClearWorkItem?.cancel()
         retentionClearWorkItem?.cancel()
+        allCompletedClearWorkItem?.cancel()
         collapseWorkItem?.cancel()
         hoverPollWorkItem?.cancel()
+        if let localOutsideClickMonitor { NSEvent.removeMonitor(localOutsideClickMonitor) }
+        if let globalOutsideClickMonitor { NSEvent.removeMonitor(globalOutsideClickMonitor) }
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -297,6 +313,12 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
 
         lastRunningRows = runningRows
         pruneRetainedCompletions()
+        if lastRunningRows.isEmpty, !retainedCompletions.isEmpty {
+            beginAllCompletedPresentationIfNeeded()
+        } else if !lastRunningRows.isEmpty, isAllCompletedPresentationActive {
+            endAllCompletedPresentation(clearCompletions: false, collapse: false)
+            pruneRetainedCompletions()
+        }
         rebuildDisplay()
         scheduleRetentionClear()
     }
@@ -309,6 +331,7 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
             running: lastRunningRows,
             announcement: completedAnnouncement,
             retained: retainedCompletions,
+            completionReviewExpanded: isCompletionReviewExpanded,
             updateNotice: updateNotice
         )
 
@@ -364,6 +387,104 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         completedAnnouncement = nil
     }
 
+    private func beginAllCompletedPresentationIfNeeded() {
+        guard !isAllCompletedPresentationActive else { return }
+        isAllCompletedPresentationActive = true
+        isCompletionReviewExpanded = false
+
+        // The per-task five-second announcement is replaced by the clearer
+        // all-completed state as soon as the final running row disappears.
+        announcementClearWorkItem?.cancel()
+        announcementClearWorkItem = nil
+        completedAnnouncement = nil
+        retentionClearWorkItem?.cancel()
+        retentionClearWorkItem = nil
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isAllCompletedPresentationActive,
+                  !self.isCompletionReviewExpanded
+            else { return }
+            self.endAllCompletedPresentation(clearCompletions: true, collapse: true)
+            self.rebuildDisplay()
+        }
+        allCompletedClearWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + ActivityCapsulePolicy.allCompletedRetentionDuration,
+            execute: work
+        )
+    }
+
+    private func beginCompletionReview() {
+        guard isAllCompletedPresentationActive, retainedCompletions.count > 1 else { return }
+        allCompletedClearWorkItem?.cancel()
+        allCompletedClearWorkItem = nil
+        isCompletionReviewExpanded = true
+        collapseWorkItem?.cancel()
+        collapseWorkItem = nil
+        installOutsideClickMonitors()
+
+        if !isExpanded {
+            withAnimation(.notchSpring) { isExpanded = true }
+            restartPollTimer(interval: Self.pollIntervalExpanded)
+            schedulePostExpandPoll()
+        }
+        rebuildDisplay()
+    }
+
+    private func endAllCompletedPresentation(clearCompletions: Bool, collapse: Bool) {
+        allCompletedClearWorkItem?.cancel()
+        allCompletedClearWorkItem = nil
+        isAllCompletedPresentationActive = false
+        isCompletionReviewExpanded = false
+        removeOutsideClickMonitors()
+        if clearCompletions { retainedCompletions.removeAll() }
+
+        guard collapse, isExpanded else { return }
+        withAnimation(.notchSpring) { isExpanded = false }
+        restartPollTimer(interval: Self.pollIntervalCollapsed)
+        finishQuotaPresentationIfNeeded()
+    }
+
+    private func installOutsideClickMonitors() {
+        removeOutsideClickMonitors()
+        // Install after the summary's own click has finished propagating, so
+        // that opening click cannot immediately dismiss the review it opened.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isCompletionReviewExpanded else { return }
+            self.localOutsideClickMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown]
+            ) { [weak self] event in
+                guard let self else { return event }
+                if !self.panel.frame.contains(NSEvent.mouseLocation) {
+                    self.dismissCompletionReview()
+                }
+                return event
+            }
+            self.globalOutsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown]
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.dismissCompletionReview() }
+            }
+        }
+    }
+
+    private func removeOutsideClickMonitors() {
+        if let localOutsideClickMonitor {
+            NSEvent.removeMonitor(localOutsideClickMonitor)
+            self.localOutsideClickMonitor = nil
+        }
+        if let globalOutsideClickMonitor {
+            NSEvent.removeMonitor(globalOutsideClickMonitor)
+            self.globalOutsideClickMonitor = nil
+        }
+    }
+
+    private func dismissCompletionReview() {
+        guard isCompletionReviewExpanded else { return }
+        endAllCompletedPresentation(clearCompletions: true, collapse: true)
+        rebuildDisplay()
+    }
+
     private func pruneRetainedCompletions(now: Date = Date()) {
         retainedCompletions = ActivityCapsulePolicy.retainedCompletions(
             from: retainedCompletions,
@@ -412,6 +533,10 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     func setListHovering(_ hovering: Bool) {
         collapseWorkItem?.cancel()
         collapseWorkItem = nil
+        // An explicitly opened completion review is click-driven, not hover-
+        // driven. Leaving the panel keeps it open; an outside click is the
+        // deliberate dismissal gesture.
+        if !hovering, isCompletionReviewExpanded { return }
         guard hovering != isExpanded else { return }
         if hovering {
             withAnimation(.notchSpring) { isExpanded = true }
@@ -654,15 +779,34 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     }
 
     func activate(_ row: CapsuleRow) {
-        if case .update(let notice) = row.display {
+        switch row.display {
+        case .completionSummary:
+            beginCompletionReview()
+            return
+        case .completed:
+            // A completion is an actionable notification: consuming it opens
+            // the corresponding task and removes the row immediately instead
+            // of leaving an already-read item around for its passive timeout.
+            if let threadID = row.threadID {
+                removeCompletion(for: threadID)
+            }
+            if retainedCompletions.isEmpty, isAllCompletedPresentationActive {
+                endAllCompletedPresentation(clearCompletions: true, collapse: true)
+            }
+            rebuildDisplay()
+            scheduleRetentionClear()
+            openCodex(threadID: row.threadID)
+            return
+        case .update(let notice):
             if let packageURL = notice.packageURL {
                 NSWorkspace.shared.activateFileViewerSelecting([packageURL])
             } else {
                 NSWorkspace.shared.open(notice.releaseURL)
             }
             return
+        case .active:
+            openCodex(threadID: row.threadID)
         }
-        openCodex(threadID: row.threadID)
     }
 
     @objc private func screenParametersChanged() {

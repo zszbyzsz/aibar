@@ -99,6 +99,8 @@ private struct CapsuleRowView: View {
             ActivePillContent(activity: activity)
         case .completed(let project, let outcome):
             CompletedPillContent(project: project, outcome: outcome, lang: lang)
+        case .completionSummary(let count):
+            CompletionSummaryPillContent(count: count, lang: lang)
         case .update(let notice):
             UpdatePillContent(notice: notice, lang: lang)
         }
@@ -115,8 +117,30 @@ private struct CapsuleRowView: View {
             return L.activityAccessibilityLabel(lang, project: activity.project, phase: activity.phase)
         case .completed(let project, let outcome):
             return L.activityCompletedAccessibilityLabel(lang, project: project, outcome: outcome)
+        case .completionSummary(let count):
+            return L.activityCompletionSummaryAccessibilityLabel(lang, count: count)
         case .update(let notice):
             return L.updateAccessibilityLabel(lang, version: notice.version, downloaded: notice.packageURL != nil)
+        }
+    }
+}
+
+private struct CompletionSummaryPillContent: View {
+    var count: Int
+    var lang: AppLanguage
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color(red: 0.290, green: 0.960, blue: 0.580))
+            Text(L.activityCompletionSummary(lang))
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(L.activityCompletionSummaryAction(lang))
+                .font(.system(size: 9.5))
+                .foregroundStyle(Color.notchMutedInk)
         }
     }
 }

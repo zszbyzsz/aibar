@@ -119,6 +119,17 @@ enum L {
             ? "项目 \(project)，\(activityOutcomeLabel(lang, outcome: outcome))"
             : "Project \(project), \(activityOutcomeLabel(lang, outcome: outcome))"
     }
+    static func activityCompletionSummary(_ lang: AppLanguage) -> String {
+        lang == .zh ? "任务已完成" : "Tasks completed"
+    }
+    static func activityCompletionSummaryAction(_ lang: AppLanguage) -> String {
+        lang == .zh ? "点击查看" : "View"
+    }
+    static func activityCompletionSummaryAccessibilityLabel(_ lang: AppLanguage, count: Int) -> String {
+        lang == .zh
+            ? "\(count) 个任务已完成，点击查看"
+            : "\(count) tasks completed, click to view"
+    }
     static func updateCapsuleLabel(_ lang: AppLanguage, version: String, downloaded: Bool) -> String {
         if lang == .zh { return downloaded ? "v\(version) 已拉取" : "可更新 v\(version)" }
         return downloaded ? "v\(version) downloaded" : "Update v\(version)"
