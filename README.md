@@ -4,7 +4,7 @@
 
 一个为 macOS 设计的本地 AI 使用情况仪表盘。aibar 把 Codex 的本地会话记录、配额和活动状态收进刘海下方与状态栏：需要时展开查看，不需要时保持安静。
 
-> 版本 0.1.4 · macOS 13 Ventura 或更高版本 · Apple Silicon
+> 版本 0.1.5 · macOS 13 Ventura 或更高版本 · Apple Silicon
 
 ![aibar dashboard](docs/images/dashboard-en.png)
 
@@ -29,7 +29,7 @@
 首次安装需要添加此项目作为 tap：
 
 ```bash
-brew tap zszbyzsz/aibar
+brew tap zszbyzsz/aibar https://github.com/zszbyzsz/aibar.git
 brew install --cask aibar
 ```
 
@@ -42,7 +42,7 @@ brew upgrade --cask aibar
 
 #### 直接下载安装包
 
-在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.4.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
+在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.5.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
 
 请使用同一 Developer ID 签名的正式发布版，以便自动更新后保持屏幕录制授权。若 macOS 阻止首次启动，请在 Finder 中按住 Control 点击应用并选择“打开”；若仍被隔离，可执行：
 
@@ -121,7 +121,7 @@ aibar is a local-first macOS dashboard for AI coding activity. It turns Codex se
 #### Homebrew (recommended)
 
 ```bash
-brew tap zszbyzsz/aibar
+brew tap zszbyzsz/aibar https://github.com/zszbyzsz/aibar.git
 brew install --cask aibar
 ```
 
@@ -134,7 +134,7 @@ brew upgrade --cask aibar
 
 #### Download the app
 
-Download `aibar-0.1.4.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
+Download `aibar-0.1.5.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
 
 Use a release signed consistently with the same Developer ID to preserve Screen Recording consent through automatic updates. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. If it remains quarantined:
 
