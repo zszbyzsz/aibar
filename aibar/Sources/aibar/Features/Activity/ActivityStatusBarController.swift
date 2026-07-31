@@ -620,7 +620,17 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// for it. Called whenever activity state changes.
     private func updateVisibility() {
         let shouldShow = isEnabled && !rows.isEmpty && !isScreenshotSuppressed
-        guard shouldShow != isPanelVisible else { return }
+        guard shouldShow != isPanelVisible else {
+            // The notch dashboard is a separate status-level panel. Opening
+            // it (or a Space/display transition) can reorder it above this
+            // already-visible capsule; previously the equality guard meant
+            // an active capsule then had no path back to the front until its
+            // contents changed. Polling is already the source of truth for
+            // live activity, so use each successful refresh to reassert the
+            // intended always-on layer without changing its visibility state.
+            if shouldShow { panel.orderFrontRegardless() }
+            return
+        }
         isPanelVisible = shouldShow
         if shouldShow {
             hideWorkItem?.cancel()

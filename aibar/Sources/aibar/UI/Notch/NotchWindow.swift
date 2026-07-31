@@ -37,6 +37,12 @@ final class NotchWindowController: NSObject, ObservableObject {
     private static let idleFallbackSize = CGSize(width: 170, height: 34)
 
     private var closeWorkItem: DispatchWorkItem?
+    /// A status-item click begins outside this panel's tracking view. Keep
+    /// its close decision separate from `closeWorkItem`: AppKit may emit a
+    /// synthetic enter while the panel is resizing, and `setExpanded(true)`
+    /// correctly cancels the hover timer in that case but must not turn a
+    /// status-bar-open dashboard into a permanently pinned one.
+    private var statusItemAutoCloseWorkItem: DispatchWorkItem?
     private var keepsDashboardOpen = false
     private var isScreenshotSuppressed = false
     /// True while the share popover (or any other child popover the dashboard
@@ -141,11 +147,26 @@ final class NotchWindowController: NSObject, ObservableObject {
     /// and needs to label itself "Show" vs "Hide" for whatever state we're in.
     var currentLanguage: AppLanguage { store.language }
 
-    /// Entry point for the status-bar icon's click-to-toggle — deliberately a
-    /// plain toggle rather than routed through the hover enter/exit path, since
-    /// there's no mouse-tracking view backing this trigger.
+    /// Entry point for the status-bar icon's click-to-toggle. A click begins
+    /// outside this panel's tracking area, so merely expanding would leave no
+    /// later `mouseExited` event to initiate the normal close. The dedicated
+    /// timer checks the actual cursor location after the opening animation;
+    /// it is intentionally not cancelled by an incidental tracking event
+    /// emitted while AppKit resizes the panel.
     func toggleExpandedByClick() {
-        setExpanded(!isExpanded)
+        // `--open` is useful for getting a freshly launched development
+        // build on screen, but it must not permanently change the behaviour
+        // of the normal status-bar control. The first deliberate click hands
+        // control back to the standard hover/click lifecycle.
+        keepsDashboardOpen = false
+        statusItemAutoCloseWorkItem?.cancel()
+        statusItemAutoCloseWorkItem = nil
+        if isExpanded {
+            setExpanded(false)
+        } else {
+            setExpanded(true)
+            scheduleStatusItemAutoClose()
+        }
     }
 
     /// Keeps the dashboard open when launched with `--open`. This is useful
@@ -196,6 +217,10 @@ final class NotchWindowController: NSObject, ObservableObject {
     private func setExpanded(_ expanded: Bool) {
         closeWorkItem?.cancel()
         closeWorkItem = nil
+        if !expanded {
+            statusItemAutoCloseWorkItem?.cancel()
+            statusItemAutoCloseWorkItem = nil
+        }
         guard expanded != isExpanded else { return }
         isExpanded = expanded
         panel.hasShadow = expanded
@@ -239,6 +264,26 @@ final class NotchWindowController: NSObject, ObservableObject {
         let work = DispatchWorkItem { [weak self] in self?.setExpanded(false) }
         closeWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+    }
+
+    /// Status-item opening has no reliable corresponding exit event because
+    /// the cursor was never in `HoverTrackingView` to begin with. Once the
+    /// user has had enough time to move into the dashboard, close only when
+    /// the pointer is demonstrably outside its current frame. If it is inside,
+    /// the ordinary hover exit path takes over when it later leaves.
+    private func scheduleStatusItemAutoClose() {
+        guard !keepsDashboardOpen, !isPopoverOpen else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.isExpanded,
+                  !self.keepsDashboardOpen,
+                  !self.isPopoverOpen,
+                  !self.panel.frame.contains(NSEvent.mouseLocation)
+            else { return }
+            self.setExpanded(false)
+        }
+        statusItemAutoCloseWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
     }
 }
 
