@@ -6,8 +6,10 @@ private func shortDate(_ isoDate: String) -> String {
 }
 
 /// Presentation policy for manually redeemable reset credits: distant credits
-/// remain quiet calendar markers, while credits expiring within ten days carry
-/// their exact expiry time and an urgency color.
+/// stay quiet alarm markers on their calendar day, while credits expiring
+/// within ten days turn red and carry their remaining-day count. The date
+/// itself is never spelled out — the marker's position in the heatmap is the
+/// date.
 enum ResetExpiryUrgency {
     static let detailedWindow: TimeInterval = 10 * 86_400
 
@@ -94,8 +96,8 @@ struct UsageChartView: View {
     private static let cellSize: CGFloat = 18
     private static let cellSpacing: CGFloat = 2
     private static let legendRatios: [Double] = [0, 0.25, 0.5, 0.75, 1.0]
-    private static let resetColor = Color(red: 1.000, green: 0.280, blue: 0.340)
-    private static let resetSoonColor = Color(red: 1.000, green: 0.620, blue: 0.160)
+    private static let resetUrgentColor = Color(red: 1.000, green: 0.280, blue: 0.340)
+    private static let resetScheduledColor = Color(red: 1.000, green: 0.620, blue: 0.160)
 
     private var daily: [DailyPoint] { timeline.points }
 
@@ -141,43 +143,35 @@ struct UsageChartView: View {
         return timeline.resetExpiriesByDate[point.date] ?? []
     }
 
-    private var expiringSoon: [Double] {
-        timeline.resetExpiriesByDate.values
-            .flatMap { $0 }
-            .filter { ResetExpiryUrgency.isDetailed($0) }
-            .sorted()
-    }
-
-    private func urgencyColor(for expiry: Double) -> Color {
-        switch ResetExpiryUrgency.daysRemaining(expiry) {
-        case 0...1: return Self.resetColor
-        case 2...3: return Color(red: 1.000, green: 0.460, blue: 0.180)
-        default: return Self.resetSoonColor
-        }
+    /// Days left until an imminent expiry. Deliberately unlocalized: at this
+    /// size a CJK glyph is unreadable, and the dashboard already uses the bare
+    /// `d` suffix in both languages (`30d 窗口`).
+    private static func daysLeftBadge(_ expiry: Double) -> String {
+        "\(ResetExpiryUrgency.daysRemaining(expiry))d"
     }
 
     @ViewBuilder
     private func resetMarker(for expiries: [Double]) -> some View {
         if let imminent = expiries.first(where: { ResetExpiryUrgency.isDetailed($0) }) {
             RoundedRectangle(cornerRadius: 4)
-                .fill(urgencyColor(for: imminent))
+                .fill(Self.resetUrgentColor)
                 .overlay(
-                    Text(Formatting.compactTimeLabel(imminent))
-                        .font(.system(size: 5.5, weight: .heavy, design: .monospaced))
+                    Text(Self.daysLeftBadge(imminent))
+                        .font(.system(size: 8, weight: .heavy, design: .rounded))
                         .foregroundStyle(Color.white)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .minimumScaleFactor(0.6)
                         .padding(.horizontal, 1)
                 )
                 .accessibilityLabel(
-                    "\(L.resetExpiresSoon(lang)): \(Formatting.compactTimeLabel(imminent)), \(L.resetExpiryWithinDays(lang, days: ResetExpiryUrgency.daysRemaining(imminent)))"
+                    L.resetExpiryWithinDays(lang, days: ResetExpiryUrgency.daysRemaining(imminent))
                 )
         } else {
             Circle()
-                .fill(Self.resetColor)
+                .fill(Self.resetScheduledColor)
                 .frame(width: Self.cellSize - 2, height: Self.cellSize - 2)
                 .overlay(
-                    Image(systemName: "arrow.counterclockwise")
+                    Image(systemName: "alarm.fill")
                         .font(.system(size: 8, weight: .heavy))
                         .foregroundStyle(Color.white)
                 )
@@ -190,6 +184,7 @@ struct UsageChartView: View {
             HStack {
                 if let hovered {
                     let expiries = resetExpiries(for: hovered)
+                    let isUrgent = expiries.contains { ResetExpiryUrgency.isDetailed($0) }
                     Text(
                         expiries.isEmpty
                             ? L.heatmapHover(lang, date: shortDate(hovered.date), cost: Formatting.moneyLabel(hovered.cost), tokens: Formatting.tokenLabel(hovered.tokens))
@@ -201,7 +196,11 @@ struct UsageChartView: View {
                             )
                     )
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(expiries.isEmpty ? Color.notchAccent : Self.resetColor)
+                        .foregroundStyle(
+                            expiries.isEmpty
+                                ? Color.notchAccent
+                                : (isUrgent ? Self.resetUrgentColor : Self.resetScheduledColor)
+                        )
                 } else {
                     Text(L.heatmapTimelineHint(lang, days: daily.count))
                         .font(.system(size: 10))
@@ -272,54 +271,19 @@ struct UsageChartView: View {
                 }
                 Text(L.more(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
                 Circle()
-                    .fill(Self.resetColor)
+                    .fill(Self.resetScheduledColor)
                     .frame(width: 12, height: 12)
                     .overlay(
-                        Image(systemName: "arrow.counterclockwise")
+                        Image(systemName: "alarm.fill")
                             .font(.system(size: 6, weight: .heavy))
                             .foregroundStyle(Color.white)
                     )
                 Text(L.resetExpiryLegend(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(Self.resetSoonColor)
+                    .fill(Self.resetUrgentColor)
                     .frame(width: 12, height: 12)
-                    .overlay(
-                        Image(systemName: "clock.fill")
-                            .font(.system(size: 6, weight: .heavy))
-                            .foregroundStyle(Color.white)
-                    )
-                Text(L.resetExpiresSoon(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                if let first = daily.first, let last = daily.last {
-                    Text("· \(shortDate(first.date)) – \(shortDate(last.date))")
-                        .font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                }
+                Text(L.resetExpiryUrgentLegend(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
                 Spacer(minLength: 0)
-            }
-
-            if !expiringSoon.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(L.resetExpiresSoon(lang))
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Self.resetSoonColor)
-
-                    ForEach(expiringSoon, id: \.self) { expiry in
-                        let days = ResetExpiryUrgency.daysRemaining(expiry)
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(urgencyColor(for: expiry))
-                                .frame(width: 6, height: 6)
-                            Text("\(shortDate(Self.isoFormatter.string(from: Date(timeIntervalSince1970: expiry)))) \(Formatting.compactTimeLabel(expiry))")
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(Color.notchInk)
-                            Text(L.resetExpiryWithinDays(lang, days: days))
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(urgencyColor(for: expiry))
-                            Spacer(minLength: 0)
-                        }
-                    }
-                }
-                .padding(.top, 2)
-                .accessibilityElement(children: .contain)
             }
         }
     }
