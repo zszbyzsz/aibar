@@ -19,8 +19,8 @@ enum L {
     }
     static func heatmapTimelineHint(_ lang: AppLanguage, days: Int) -> String {
         lang == .zh
-            ? "\(days) 天时间轴 · 颜色表示 token · 方框标记今天"
-            : "\(days)-day timeline · color shows tokens · outlined square is today"
+            ? "\(days)天 · token 深浅 · 今天有边框"
+            : "\(days)d · token intensity · today outlined"
     }
     static func heatmapResetHover(
         _ lang: AppLanguage,
@@ -33,10 +33,10 @@ enum L {
             : "\(date): \(count) reset \(count == 1 ? "expires" : "expire") · \(times)"
     }
     static func resetExpiryLegend(_ lang: AppLanguage) -> String {
-        lang == .zh ? "10 天后到期" : "Expires after 10d"
+        lang == .zh ? "重置 >10天" : "Reset >10d"
     }
     static func resetExpiryUrgentLegend(_ lang: AppLanguage) -> String {
-        lang == .zh ? "10 天内 · 剩余天数" : "Within 10d · days left"
+        lang == .zh ? "重置 ≤10天" : "Reset ≤10d"
     }
     static func resetExpiryWithinDays(_ lang: AppLanguage, days: Int) -> String {
         if days == 0 { return lang == .zh ? "今天到期" : "Expires today" }
@@ -44,6 +44,7 @@ enum L {
     }
     static func less(_ lang: AppLanguage) -> String { lang == .zh ? "少" : "Less" }
     static func more(_ lang: AppLanguage) -> String { lang == .zh ? "多" : "More" }
+    static func today(_ lang: AppLanguage) -> String { lang == .zh ? "今天" : "Today" }
 
     static func trendVsPrior7d(_ lang: AppLanguage, _ percent: Int) -> String {
         lang == .zh ? "\(percent)% 较前7天" : "\(percent)% vs prior 7d"

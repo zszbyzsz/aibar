@@ -22,6 +22,42 @@ final class UsageTimelineTests: XCTestCase {
         XCTAssertEqual(UsageHeatmapIntensity.ratio(tokens: 100, maximum: 0), 0)
     }
 
+    func testUsageMilestonesUseInclusiveOneFiveAndTenBillionThresholds() {
+        XCTAssertEqual(UsageMilestone.level(for: 999_999_999), .none)
+        XCTAssertEqual(UsageMilestone.level(for: 1_000_000_000), .billion)
+        XCTAssertEqual(UsageMilestone.level(for: 4_999_999_999), .billion)
+        XCTAssertEqual(UsageMilestone.level(for: 5_000_000_000), .fiveBillion)
+        XCTAssertEqual(UsageMilestone.level(for: 9_999_999_999), .fiveBillion)
+        XCTAssertEqual(UsageMilestone.level(for: 10_000_000_000), .tenBillion)
+    }
+
+    func testConsecutiveMilestonesShareOneFrameUsingTheStrongestTier() {
+        let week: [DailyPoint?] = [
+            nil,
+            DailyPoint(date: "2026-07-27", tokens: 1_200_000_000, cost: 0),
+            DailyPoint(date: "2026-07-28", tokens: 5_400_000_000, cost: 0),
+            DailyPoint(date: "2026-07-29", tokens: 10_730_000_000, cost: 0),
+            DailyPoint(date: "2026-07-30", tokens: 0, cost: 0),
+            DailyPoint(date: "2026-07-31", tokens: 1_100_000_000, cost: 0),
+            nil,
+        ]
+
+        XCTAssertEqual(
+            UsageMilestoneGrouping.runs(in: week),
+            [
+                UsageMilestoneRun(startRow: 1, endRow: 3, milestone: .tenBillion),
+                UsageMilestoneRun(startRow: 5, endRow: 5, milestone: .billion),
+            ]
+        )
+    }
+
+    func testCompactResetLegendCopyRetainsTheTenDayBoundary() {
+        XCTAssertEqual(L.resetExpiryLegend(.zh), "重置 >10天")
+        XCTAssertEqual(L.resetExpiryUrgentLegend(.zh), "重置 ≤10天")
+        XCTAssertEqual(L.resetExpiryLegend(.en), "Reset >10d")
+        XCTAssertEqual(L.resetExpiryUrgentLegend(.en), "Reset ≤10d")
+    }
+
     private var utcCalendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

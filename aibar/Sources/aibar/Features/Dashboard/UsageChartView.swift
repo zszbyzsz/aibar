@@ -37,6 +37,145 @@ enum UsageHeatmapIntensity {
     }
 }
 
+/// Visual rewards layered on top of the token-driven heatmap color. The 10B
+/// tier is intentionally absent from the visible legend: discovering its
+/// double ring and glint is part of the reward.
+enum UsageMilestone: Int, Comparable {
+    case none
+    case billion
+    case fiveBillion
+    case tenBillion
+
+    static let billionThreshold = 1_000_000_000
+    static let fiveBillionThreshold = 5_000_000_000
+    static let tenBillionThreshold = 10_000_000_000
+
+    static func level(for tokens: Int) -> UsageMilestone {
+        switch tokens {
+        case tenBillionThreshold...: return .tenBillion
+        case fiveBillionThreshold...: return .fiveBillion
+        case billionThreshold...: return .billion
+        default: return .none
+        }
+    }
+
+    static func < (lhs: UsageMilestone, rhs: UsageMilestone) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+struct UsageMilestoneRun: Identifiable, Equatable {
+    let startRow: Int
+    let endRow: Int
+    let milestone: UsageMilestone
+
+    var id: Int { startRow }
+    var rowCount: Int { endRow - startRow + 1 }
+}
+
+/// Calendar days run vertically inside each week column. Adjacent milestone
+/// cells therefore become one framed streak, using the strongest reward found
+/// in that streak. A week turn starts a new visual group because Sunday and
+/// Monday are not adjacent on screen.
+enum UsageMilestoneGrouping {
+    static func runs(in week: [DailyPoint?]) -> [UsageMilestoneRun] {
+        var result: [UsageMilestoneRun] = []
+        var startRow: Int?
+        var strongest = UsageMilestone.none
+
+        func finish(at endRow: Int) {
+            guard let startRow else { return }
+            result.append(
+                UsageMilestoneRun(startRow: startRow, endRow: endRow, milestone: strongest)
+            )
+        }
+
+        for row in week.indices {
+            let milestone = UsageMilestone.level(for: week[row]?.tokens ?? 0)
+            if milestone == .none {
+                if startRow != nil { finish(at: row - 1) }
+                startRow = nil
+                strongest = .none
+            } else {
+                if startRow == nil { startRow = row }
+                strongest = max(strongest, milestone)
+            }
+        }
+        if startRow != nil { finish(at: week.count - 1) }
+        return result
+    }
+}
+
+/// Four short strokes preserve the square's heatmap fill while giving high-
+/// usage days a crisp, celebratory frame.
+private struct MilestoneCorners: Shape {
+    func path(in rect: CGRect) -> Path {
+        let segment = min(rect.width, rect.height) * 0.28
+        var path = Path()
+
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY + segment))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX + segment, y: rect.minY))
+
+        path.move(to: CGPoint(x: rect.maxX - segment, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + segment))
+
+        path.move(to: CGPoint(x: rect.maxX, y: rect.maxY - segment))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX - segment, y: rect.maxY))
+
+        path.move(to: CGPoint(x: rect.minX + segment, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - segment))
+
+        return path
+    }
+}
+
+private struct UsageMilestoneDecoration: View {
+    let milestone: UsageMilestone
+
+    private static let cornerBlue = Color(red: 0.180, green: 0.490, blue: 1.000)
+    private static let brightCyan = Color(red: 0.080, green: 0.910, blue: 1.000)
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if milestone >= .fiveBillion {
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(Self.brightCyan, lineWidth: milestone == .tenBillion ? 1.2 : 1.5)
+                    .padding(-2)
+                    .shadow(color: Self.brightCyan.opacity(0.75), radius: 3)
+            }
+
+            if milestone == .tenBillion {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Self.brightCyan.opacity(0.85), lineWidth: 1)
+                    .padding(-4)
+
+                Image(systemName: "sparkle")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(Color(red: 0.520, green: 0.890, blue: 1.000))
+                    .shadow(color: Self.brightCyan, radius: 3)
+                    .offset(x: 4, y: -4)
+            } else {
+                MilestoneCorners()
+                    .stroke(
+                        milestone == .fiveBillion ? Self.brightCyan : Self.cornerBlue,
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
+                    )
+                    .padding(-1)
+                    .shadow(
+                        color: (milestone == .fiveBillion ? Self.brightCyan : Self.cornerBlue).opacity(0.75),
+                        radius: milestone == .fiveBillion ? 3 : 2
+                    )
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 /// A fixed-size 90-day window whose right edge advances to the furthest known
 /// Full reset expiry. With no reset it ends today; with an expiry 13 days out,
 /// for example, it naturally shows 76 historical days, today, and 13 future
@@ -154,6 +293,19 @@ struct UsageChartView: View {
         return timeline.resetExpiriesByDate[point.date] ?? []
     }
 
+    @ViewBuilder
+    private func milestoneLegend(_ milestone: UsageMilestone, label: String) -> some View {
+        HStack(spacing: 4) {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color.notchRule)
+                .frame(width: 12, height: 12)
+                .overlay(UsageMilestoneDecoration(milestone: milestone))
+            Text(label)
+                .font(.system(size: 9))
+                .foregroundStyle(Color.notchMutedInk)
+        }
+    }
+
     /// Days left until an imminent expiry. Deliberately unlocalized: at this
     /// size a CJK glyph is unreadable, and the dashboard already uses the bare
     /// `d` suffix in both languages (`30d 窗口`).
@@ -236,32 +388,48 @@ struct UsageChartView: View {
 
                 HStack(spacing: Self.cellSpacing) {
                     ForEach(weeks.indices, id: \.self) { col in
-                        VStack(spacing: Self.cellSpacing) {
-                            ForEach(0..<7, id: \.self) { row in
-                                let point = weeks[col][row]
-                                let expiries = resetExpiries(for: point)
-                                let isToday = point?.date == timeline.todayKey
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(cellColor(point))
-                                    if !expiries.isEmpty {
-                                        resetMarker(for: expiries)
-                                    }
-                                }
-                                    .frame(width: Self.cellSize, height: Self.cellSize)
-                                    .overlay(
+                        let milestoneRuns = UsageMilestoneGrouping.runs(in: weeks[col])
+                        ZStack(alignment: .topLeading) {
+                            VStack(spacing: Self.cellSpacing) {
+                                ForEach(0..<7, id: \.self) { row in
+                                    let point = weeks[col][row]
+                                    let expiries = resetExpiries(for: point)
+                                    let isToday = point?.date == timeline.todayKey
+                                    ZStack {
                                         RoundedRectangle(cornerRadius: 4)
-                                            .strokeBorder(
-                                                isToday
-                                                    ? Color.notchInk
-                                                    : (point != nil && point?.id == hovered?.id ? Color.notchAccent : Color.clear),
-                                                lineWidth: isToday ? 2 : 1.5
-                                            )
-                                    )
-                                    .onHover { isHovering in
-                                        guard let point else { return }
-                                        hovered = isHovering ? point : (hovered?.id == point.id ? nil : hovered)
+                                            .fill(cellColor(point))
+                                        if !expiries.isEmpty {
+                                            resetMarker(for: expiries)
+                                        }
                                     }
+                                        .frame(width: Self.cellSize, height: Self.cellSize)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .strokeBorder(
+                                                    isToday
+                                                        ? Color.notchInk
+                                                        : (point != nil && point?.id == hovered?.id ? Color.notchAccent : Color.clear),
+                                                    lineWidth: isToday ? 2 : 1.5
+                                                )
+                                        )
+                                        .onHover { isHovering in
+                                            guard let point else { return }
+                                            hovered = isHovering ? point : (hovered?.id == point.id ? nil : hovered)
+                                        }
+                                }
+                            }
+
+                            ForEach(milestoneRuns) { run in
+                                UsageMilestoneDecoration(milestone: run.milestone)
+                                    .frame(
+                                        width: Self.cellSize,
+                                        height: CGFloat(run.rowCount) * Self.cellSize
+                                            + CGFloat(run.rowCount - 1) * Self.cellSpacing
+                                    )
+                                    .offset(
+                                        y: CGFloat(run.startRow) * (Self.cellSize + Self.cellSpacing)
+                                    )
+                                    .zIndex(1)
                             }
                         }
                     }
@@ -270,31 +438,48 @@ struct UsageChartView: View {
                 Spacer(minLength: 0)
             }
 
-            // Below the grid rather than beside it — freed from competing for
-            // width with the week columns above, and it's a natural width-only
-            // row now that the grid's height no longer scales with history.
-            HStack(spacing: 4) {
-                Text(L.less(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                ForEach(Self.legendRatios, id: \.self) { ratio in
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(cellColor(nil, ratioOverride: ratio))
-                        .frame(width: 12, height: 12)
+            // Two short rows keep each symbol close to its meaning without
+            // compressing every state into one long sentence. The 10B reward
+            // remains deliberately undocumented as an easter egg.
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 5) {
+                    Text(L.less(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
+                    ForEach(Self.legendRatios, id: \.self) { ratio in
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(cellColor(nil, ratioOverride: ratio))
+                            .frame(width: 12, height: 12)
+                    }
+                    Text(L.more(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
+                    milestoneLegend(.billion, label: "1B+")
+                    milestoneLegend(.fiveBillion, label: "5B+")
+                    Spacer(minLength: 0)
                 }
-                Text(L.more(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                Circle()
-                    .fill(Self.resetScheduledColor)
-                    .frame(width: 12, height: 12)
-                    .overlay(
-                        Image(systemName: "alarm.fill")
-                            .font(.system(size: 6, weight: .heavy))
-                            .foregroundStyle(Color.white)
-                    )
-                Text(L.resetExpiryLegend(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(Self.resetUrgentColor)
-                    .frame(width: 12, height: 12)
-                Text(L.resetExpiryUrgentLegend(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                Spacer(minLength: 0)
+
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(Self.resetScheduledColor)
+                        .frame(width: 12, height: 12)
+                        .overlay(
+                            Image(systemName: "alarm.fill")
+                                .font(.system(size: 6, weight: .heavy))
+                                .foregroundStyle(Color.white)
+                        )
+                    Text(L.resetExpiryLegend(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Self.resetUrgentColor)
+                        .frame(width: 12, height: 12)
+                        .overlay(
+                            Text("3d")
+                                .font(.system(size: 5.5, weight: .heavy, design: .rounded))
+                                .foregroundStyle(Color.white)
+                        )
+                    Text(L.resetExpiryUrgentLegend(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
+                    RoundedRectangle(cornerRadius: 3)
+                        .strokeBorder(Color.notchInk, lineWidth: 1.5)
+                        .frame(width: 12, height: 12)
+                    Text(L.today(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
+                    Spacer(minLength: 0)
+                }
             }
         }
     }
