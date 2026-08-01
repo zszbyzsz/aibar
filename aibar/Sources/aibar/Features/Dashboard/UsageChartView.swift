@@ -230,11 +230,11 @@ struct UsageChartView: View {
     private static let cellSize: CGFloat = 18
     private static let cellSpacing: CGFloat = 2
     private static let heatmapPalette: [HeatmapRGB] = [
-        HeatmapRGB(red: 0.275, green: 0.190, blue: 0.620),
-        HeatmapRGB(red: 0.355, green: 0.315, blue: 0.900),
-        HeatmapRGB(red: 0.120, green: 0.405, blue: 0.925),
-        HeatmapRGB(red: 0.055, green: 0.620, blue: 0.930),
-        HeatmapRGB(red: 0.080, green: 0.825, blue: 0.825),
+        HeatmapRGB(red: 0.075, green: 0.145, blue: 0.255),
+        HeatmapRGB(red: 0.035, green: 0.215, blue: 0.495),
+        HeatmapRGB(red: 0.025, green: 0.365, blue: 0.785),
+        HeatmapRGB(red: 0.030, green: 0.510, blue: 1.000),
+        HeatmapRGB(red: 0.040, green: 0.690, blue: 0.980),
     ]
     private static let resetUrgentColor = Color(red: 1.000, green: 0.280, blue: 0.340)
     private static let resetScheduledColor = Color(red: 1.000, green: 0.620, blue: 0.160)
