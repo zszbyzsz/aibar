@@ -3,23 +3,24 @@ import XCTest
 @testable import aibar
 
 final class UsageTimelineTests: XCTestCase {
-    func testHeatmapIntensityIsDrivenByTokensAndMonotonicallyIncreases() {
-        let maximum = 900_000_000
-        let empty = UsageHeatmapIntensity.ratio(tokens: 0, maximum: maximum)
-        let small = UsageHeatmapIntensity.ratio(tokens: 9_000_000, maximum: maximum)
-        let medium = UsageHeatmapIntensity.ratio(tokens: 225_000_000, maximum: maximum)
-        let peak = UsageHeatmapIntensity.ratio(tokens: maximum, maximum: maximum)
-
-        XCTAssertEqual(empty, 0)
-        XCTAssertLessThan(empty, small)
-        XCTAssertLessThan(small, medium)
-        XCTAssertLessThan(medium, peak)
-        XCTAssertEqual(peak, 1)
+    func testHeatmapUsesStableAbsoluteTokenBands() {
+        XCTAssertEqual(UsageHeatmapLevel.level(for: 0), .none)
+        XCTAssertEqual(UsageHeatmapLevel.level(for: 1), .low)
+        XCTAssertEqual(UsageHeatmapLevel.level(for: 99_999_999), .low)
+        XCTAssertEqual(UsageHeatmapLevel.level(for: 100_000_000), .moderate)
+        XCTAssertEqual(UsageHeatmapLevel.level(for: 499_999_999), .moderate)
+        XCTAssertEqual(UsageHeatmapLevel.level(for: 500_000_000), .elevated)
+        XCTAssertEqual(UsageHeatmapLevel.level(for: 999_999_999), .elevated)
+        XCTAssertEqual(UsageHeatmapLevel.level(for: 1_000_000_000), .high)
+        XCTAssertEqual(UsageHeatmapLevel.level(for: 4_999_999_999), .high)
+        XCTAssertEqual(UsageHeatmapLevel.level(for: 5_000_000_000), .peak)
     }
 
-    func testHeatmapIntensityClampsValuesAboveMaximum() {
-        XCTAssertEqual(UsageHeatmapIntensity.ratio(tokens: 200, maximum: 100), 1)
-        XCTAssertEqual(UsageHeatmapIntensity.ratio(tokens: 100, maximum: 0), 0)
+    func testHeatmapLegendShowsEveryActiveColorBand() {
+        XCTAssertEqual(
+            UsageHeatmapLevel.visibleLegendLevels,
+            [.low, .moderate, .elevated, .high, .peak]
+        )
     }
 
     func testUsageMilestonesUseInclusiveOneFiveAndTenBillionThresholds() {

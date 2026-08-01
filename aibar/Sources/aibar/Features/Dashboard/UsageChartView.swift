@@ -24,16 +24,34 @@ enum ResetExpiryUrgency {
     }
 }
 
-/// Maps authoritative daily token totals to heatmap intensity. Square-root
-/// scaling keeps the ordering strictly tied to token volume while preventing
-/// one unusually large day from making every other active day look empty.
-/// This is a presentation transform only: hover text continues to show the
-/// exact token count.
-enum UsageHeatmapIntensity {
-    static func ratio(tokens: Int, maximum: Int) -> Double {
-        guard tokens > 0, maximum > 0 else { return 0 }
-        let linearRatio = min(1, Double(tokens) / Double(maximum))
-        return linearRatio.squareRoot()
+/// Stable, absolute token bands keep the same token total the same color even
+/// when the visible timeline or its largest day changes. Exact totals remain
+/// available on hover; the bands optimize the 18pt cells for fast comparison.
+enum UsageHeatmapLevel: Int, CaseIterable, Comparable {
+    case none
+    case low
+    case moderate
+    case elevated
+    case high
+    case peak
+
+    static let visibleLegendLevels: [UsageHeatmapLevel] = [
+        .low, .moderate, .elevated, .high, .peak,
+    ]
+
+    static func level(for tokens: Int) -> UsageHeatmapLevel {
+        switch tokens {
+        case 5_000_000_000...: return .peak
+        case 1_000_000_000...: return .high
+        case 500_000_000...: return .elevated
+        case 100_000_000...: return .moderate
+        case 1...: return .low
+        default: return .none
+        }
+    }
+
+    static func < (lhs: UsageHeatmapLevel, rhs: UsageHeatmapLevel) -> Bool {
+        lhs.rawValue < rhs.rawValue
     }
 }
 
@@ -196,7 +214,13 @@ struct UsageChartView: View {
 
     private static let cellSize: CGFloat = 18
     private static let cellSpacing: CGFloat = 2
-    private static let legendRatios: [Double] = [0, 0.25, 0.5, 0.75, 1.0]
+    private static let heatmapColors: [UsageHeatmapLevel: Color] = [
+        .low: Color(red: 0.275, green: 0.190, blue: 0.620),
+        .moderate: Color(red: 0.355, green: 0.315, blue: 0.900),
+        .elevated: Color(red: 0.120, green: 0.405, blue: 0.925),
+        .high: Color(red: 0.055, green: 0.620, blue: 0.930),
+        .peak: Color(red: 0.080, green: 0.825, blue: 0.825),
+    ]
     private static let resetUrgentColor = Color(red: 1.000, green: 0.280, blue: 0.340)
     private static let resetScheduledColor = Color(red: 1.000, green: 0.620, blue: 0.160)
 
@@ -227,14 +251,13 @@ struct UsageChartView: View {
         return stride(from: 0, to: cells.count, by: 7).map { Array(cells[$0..<$0 + 7]) }
     }
 
-    private var maxTokens: Int { daily.map(\.tokens).max() ?? 0 }
+    private func heatmapColor(for level: UsageHeatmapLevel) -> Color {
+        level == .none ? Color.notchRule : Self.heatmapColors[level, default: Color.notchRule]
+    }
 
-    private func cellColor(_ point: DailyPoint?, ratioOverride: Double? = nil) -> Color {
-        if let ratioOverride { return ratioOverride <= 0 ? Color.notchRule : Color.notchAccent.opacity(0.28 + 0.72 * ratioOverride) }
+    private func cellColor(_ point: DailyPoint?) -> Color {
         guard let point else { return .clear }
-        guard point.tokens > 0 else { return Color.notchRule }
-        let intensity = UsageHeatmapIntensity.ratio(tokens: point.tokens, maximum: maxTokens)
-        return Color.notchAccent.opacity(0.28 + 0.72 * intensity)
+        return heatmapColor(for: UsageHeatmapLevel.level(for: point.tokens))
     }
 
     private func resetExpiries(for point: DailyPoint?) -> [Double] {
@@ -380,9 +403,9 @@ struct UsageChartView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 5) {
                     Text(L.less(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                    ForEach(Self.legendRatios, id: \.self) { ratio in
+                    ForEach(UsageHeatmapLevel.visibleLegendLevels, id: \.self) { level in
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(cellColor(nil, ratioOverride: ratio))
+                            .fill(heatmapColor(for: level))
                             .frame(width: 12, height: 12)
                     }
                     Text(L.more(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
