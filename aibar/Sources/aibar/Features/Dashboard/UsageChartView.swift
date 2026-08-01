@@ -24,34 +24,49 @@ enum ResetExpiryUrgency {
     }
 }
 
-/// Stable, absolute token bands keep the same token total the same color even
-/// when the visible timeline or its largest day changes. Exact totals remain
-/// available on hover; the bands optimize the 18pt cells for fast comparison.
-enum UsageHeatmapLevel: Int, CaseIterable, Comparable {
-    case none
-    case low
-    case moderate
-    case elevated
-    case high
-    case peak
+/// Stable token anchors keep the same total at the same palette position while
+/// interpolating between anchors removes the hard visual steps of fixed bands.
+/// Exact totals remain available on hover.
+enum UsageHeatmapScale {
+    static let legendPositions: [Double] = [0, 0.25, 0.5, 0.75, 1]
 
-    static let visibleLegendLevels: [UsageHeatmapLevel] = [
-        .low, .moderate, .elevated, .high, .peak,
+    private static let anchors: [(tokens: Int, position: Double)] = [
+        (0, 0),
+        (100_000_000, 0.25),
+        (500_000_000, 0.5),
+        (1_000_000_000, 0.75),
+        (5_000_000_000, 1),
     ]
 
-    static func level(for tokens: Int) -> UsageHeatmapLevel {
-        switch tokens {
-        case 5_000_000_000...: return .peak
-        case 1_000_000_000...: return .high
-        case 500_000_000...: return .elevated
-        case 100_000_000...: return .moderate
-        case 1...: return .low
-        default: return .none
+    static func position(for tokens: Int) -> Double {
+        guard tokens > 0 else { return 0 }
+        for index in 1..<anchors.count where tokens <= anchors[index].tokens {
+            let lower = anchors[index - 1]
+            let upper = anchors[index]
+            let fraction = Double(tokens - lower.tokens) / Double(upper.tokens - lower.tokens)
+            return lower.position + (upper.position - lower.position) * fraction
         }
+        return 1
+    }
+}
+
+private struct HeatmapRGB {
+    let red: Double
+    let green: Double
+    let blue: Double
+
+    var color: Color { Color(red: red, green: green, blue: blue) }
+
+    func dimmed(_ factor: Double) -> HeatmapRGB {
+        HeatmapRGB(red: red * factor, green: green * factor, blue: blue * factor)
     }
 
-    static func < (lhs: UsageHeatmapLevel, rhs: UsageHeatmapLevel) -> Bool {
-        lhs.rawValue < rhs.rawValue
+    func interpolated(to other: HeatmapRGB, fraction: Double) -> HeatmapRGB {
+        HeatmapRGB(
+            red: red + (other.red - red) * fraction,
+            green: green + (other.green - green) * fraction,
+            blue: blue + (other.blue - blue) * fraction
+        )
     }
 }
 
@@ -214,12 +229,12 @@ struct UsageChartView: View {
 
     private static let cellSize: CGFloat = 18
     private static let cellSpacing: CGFloat = 2
-    private static let heatmapColors: [UsageHeatmapLevel: Color] = [
-        .low: Color(red: 0.275, green: 0.190, blue: 0.620),
-        .moderate: Color(red: 0.355, green: 0.315, blue: 0.900),
-        .elevated: Color(red: 0.120, green: 0.405, blue: 0.925),
-        .high: Color(red: 0.055, green: 0.620, blue: 0.930),
-        .peak: Color(red: 0.080, green: 0.825, blue: 0.825),
+    private static let heatmapPalette: [HeatmapRGB] = [
+        HeatmapRGB(red: 0.275, green: 0.190, blue: 0.620),
+        HeatmapRGB(red: 0.355, green: 0.315, blue: 0.900),
+        HeatmapRGB(red: 0.120, green: 0.405, blue: 0.925),
+        HeatmapRGB(red: 0.055, green: 0.620, blue: 0.930),
+        HeatmapRGB(red: 0.080, green: 0.825, blue: 0.825),
     ]
     private static let resetUrgentColor = Color(red: 1.000, green: 0.280, blue: 0.340)
     private static let resetScheduledColor = Color(red: 1.000, green: 0.620, blue: 0.160)
@@ -251,13 +266,38 @@ struct UsageChartView: View {
         return stride(from: 0, to: cells.count, by: 7).map { Array(cells[$0..<$0 + 7]) }
     }
 
-    private func heatmapColor(for level: UsageHeatmapLevel) -> Color {
-        level == .none ? Color.notchRule : Self.heatmapColors[level, default: Color.notchRule]
+    private static func heatmapRGB(at position: Double) -> HeatmapRGB {
+        let clamped = min(1, max(0, position))
+        let scaled = clamped * Double(heatmapPalette.count - 1)
+        let lowerIndex = min(Int(scaled), heatmapPalette.count - 1)
+        let upperIndex = min(lowerIndex + 1, heatmapPalette.count - 1)
+        return heatmapPalette[lowerIndex].interpolated(
+            to: heatmapPalette[upperIndex],
+            fraction: scaled - Double(lowerIndex)
+        )
     }
 
-    private func cellColor(_ point: DailyPoint?) -> Color {
-        guard let point else { return .clear }
-        return heatmapColor(for: UsageHeatmapLevel.level(for: point.tokens))
+    private func cellFill(_ point: DailyPoint?) -> LinearGradient {
+        guard let point else {
+            return LinearGradient(
+                colors: [.clear, .clear],
+                startPoint: .bottomLeading,
+                endPoint: .topTrailing
+            )
+        }
+        guard point.tokens > 0 else {
+            return LinearGradient(
+                colors: [Color.notchRule, Color.notchRule],
+                startPoint: .bottomLeading,
+                endPoint: .topTrailing
+            )
+        }
+        let rgb = Self.heatmapRGB(at: UsageHeatmapScale.position(for: point.tokens))
+        return LinearGradient(
+            colors: [rgb.dimmed(0.84).color, rgb.color],
+            startPoint: .bottomLeading,
+            endPoint: .topTrailing
+        )
     }
 
     private func resetExpiries(for point: DailyPoint?) -> [Double] {
@@ -368,7 +408,7 @@ struct UsageChartView: View {
                                 let milestone = UsageMilestone.level(for: point?.tokens ?? 0)
                                 ZStack {
                                     RoundedRectangle(cornerRadius: 4)
-                                        .fill(cellColor(point))
+                                        .fill(cellFill(point))
                                     if !expiries.isEmpty {
                                         resetMarker(for: expiries)
                                     } else if milestone != .none {
@@ -403,11 +443,17 @@ struct UsageChartView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 5) {
                     Text(L.less(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                    ForEach(UsageHeatmapLevel.visibleLegendLevels, id: \.self) { level in
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(heatmapColor(for: level))
-                            .frame(width: 12, height: 12)
-                    }
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(
+                            LinearGradient(
+                                colors: UsageHeatmapScale.legendPositions.map {
+                                    Self.heatmapRGB(at: $0).color
+                                },
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: 68, height: 12)
                     Text(L.more(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
                     ForEach(UsageMilestone.visibleLegendTiers, id: \.self) { milestone in
                         milestoneLegend(milestone, label: milestone == .billion ? "1B+" : "5B+")

@@ -3,24 +3,21 @@ import XCTest
 @testable import aibar
 
 final class UsageTimelineTests: XCTestCase {
-    func testHeatmapUsesStableAbsoluteTokenBands() {
-        XCTAssertEqual(UsageHeatmapLevel.level(for: 0), .none)
-        XCTAssertEqual(UsageHeatmapLevel.level(for: 1), .low)
-        XCTAssertEqual(UsageHeatmapLevel.level(for: 99_999_999), .low)
-        XCTAssertEqual(UsageHeatmapLevel.level(for: 100_000_000), .moderate)
-        XCTAssertEqual(UsageHeatmapLevel.level(for: 499_999_999), .moderate)
-        XCTAssertEqual(UsageHeatmapLevel.level(for: 500_000_000), .elevated)
-        XCTAssertEqual(UsageHeatmapLevel.level(for: 999_999_999), .elevated)
-        XCTAssertEqual(UsageHeatmapLevel.level(for: 1_000_000_000), .high)
-        XCTAssertEqual(UsageHeatmapLevel.level(for: 4_999_999_999), .high)
-        XCTAssertEqual(UsageHeatmapLevel.level(for: 5_000_000_000), .peak)
+    func testHeatmapInterpolatesContinuouslyBetweenStableTokenAnchors() {
+        XCTAssertEqual(UsageHeatmapScale.position(for: 0), 0)
+        XCTAssertEqual(UsageHeatmapScale.position(for: 100_000_000), 0.25)
+        XCTAssertEqual(UsageHeatmapScale.position(for: 500_000_000), 0.5)
+        XCTAssertEqual(UsageHeatmapScale.position(for: 1_000_000_000), 0.75)
+        XCTAssertEqual(UsageHeatmapScale.position(for: 5_000_000_000), 1)
+        XCTAssertEqual(UsageHeatmapScale.position(for: 8_000_000_000), 1)
+
+        let betweenAnchors = UsageHeatmapScale.position(for: 300_000_000)
+        XCTAssertGreaterThan(betweenAnchors, 0.25)
+        XCTAssertLessThan(betweenAnchors, 0.5)
     }
 
-    func testHeatmapLegendShowsEveryActiveColorBand() {
-        XCTAssertEqual(
-            UsageHeatmapLevel.visibleLegendLevels,
-            [.low, .moderate, .elevated, .high, .peak]
-        )
+    func testHeatmapLegendSamplesTheFullContinuousScale() {
+        XCTAssertEqual(UsageHeatmapScale.legendPositions, [0, 0.25, 0.5, 0.75, 1])
     }
 
     func testUsageMilestonesUseInclusiveOneFiveAndTenBillionThresholds() {
