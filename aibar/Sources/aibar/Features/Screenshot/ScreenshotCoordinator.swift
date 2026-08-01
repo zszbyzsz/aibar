@@ -48,7 +48,7 @@ final class ScreenshotCoordinator {
         // capture sound before the editor appears.
         process.arguments = ["-i", "-s", "-x", "-t", "png", destination.path]
         process.terminationHandler = { [weak self] process in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.finishCapture(process: process, destination: destination)
             }
         }

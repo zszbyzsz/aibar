@@ -24,10 +24,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate Homebrew Cask
         run: |
-          brew info --json=v2 --cask ./Casks/aibar.rb |
+          brew tap-new --no-git local/aibar
+          tap_dir="$(brew --repository local/aibar)"
+          mkdir -p "$tap_dir/Casks"
+          cp Casks/aibar.rb "$tap_dir/Casks/aibar.rb"
+          brew info --json=v2 --cask local/aibar/aibar |
             ruby -rjson -e '
               requirement = JSON.parse($stdin.read).dig("casks", 0, "depends_on", "macos")
               expected = {">=" => ["13"]}
               abort "expected #{expected.inspect}, got #{requirement.inspect}" unless requirement == expected
             '
-          brew audit --cask --strict Casks/aibar.rb
+          brew audit --cask --strict local/aibar/aibar
