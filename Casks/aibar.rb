@@ -1,6 +1,6 @@
 cask "aibar" do
-  version "0.1.9"
-  sha256 "24741516dd281cd67bc248d1965f935a84795c9b356e03d58b4f6e84eba526a0"
+  version "0.1.10"
+  sha256 "9a9d116001502a5f29d34f9f348c179ea6f75366862dfd90358c5dd16f38ecde"
 
   url "https://github.com/zszbyzsz/aibar/releases/download/v#{version}/aibar-#{version}.zip"
   name "aibar"
@@ -13,9 +13,9 @@ cask "aibar" do
   app "aibar.app"
 
   caveats <<~EOS
-    aibar is ad-hoc signed. On its first launch, Control-click the app and
-    choose Open if macOS shows a security warning. Upgrading from this build
-    to the first Developer ID signed release requires granting Screen Recording
-    once more; later consistently signed releases retain that permission.
+    aibar is Ad-hoc signed. After installing or upgrading, grant Screen
+    Recording again if prompted. Control-click the app and choose Open if
+    macOS shows a security warning. Moving to the first Developer ID signed
+    release will require one final privacy reauthorization.
   EOS
 end

@@ -6,7 +6,7 @@
 
 aibar 是一款本地优先的 macOS AI 编程用量仪表盘。它把 Codex 会话记录、配额、项目与模型统计和实时运行状态收进 MacBook 刘海下方与状态栏，并通过 `fn + 4` 提供为 AI 反馈设计的截图标注工具——需要时展开，不需要时保持安静。
 
-> 版本 0.1.9 · macOS 13 Ventura 或更高版本 · Apple Silicon
+> 版本 0.1.10 · macOS 13 Ventura 或更高版本 · Apple Silicon
 
 ![aibar 仪表盘](docs/images/dashboard-zh.png)
 
@@ -73,11 +73,11 @@ brew update
 brew upgrade --cask aibar
 ```
 
-`v0.1.9` 及更早的安装包使用 Ad-hoc 签名，每个版本的 macOS 隐私身份都不同。迁移到首个 Developer ID 签名版本时，需要重新授予一次屏幕录制权限；之后使用同一 Developer ID 发布的更新会继续复用该授权。
+`v0.1.10` 及更早的安装包使用 Ad-hoc 签名，每个版本的 macOS 隐私身份都不同。升级后若系统提示，请重新授予屏幕录制权限。迁移到首个 Developer ID 签名版本时还需要最后重新授权一次；之后使用同一 Developer ID 发布的更新会继续复用该授权。
 
 ### 直接下载安装包
 
-在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.9.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
+在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.10.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
 
 请使用同一 Developer ID 签名的正式发布版，以便自动更新后保持屏幕录制授权。若 macOS 阻止首次启动，请在 Finder 中按住 Control 点击应用并选择“打开”；若仍被隔离，可执行：
 
@@ -129,7 +129,13 @@ open dist/aibar.app
 
 ```bash
 SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-  ./scripts/package-release.sh 0.1.9
+  ./scripts/package-release.sh 0.1.10
+```
+
+若确认可以在升级后重新授权，可通过显式开关生成 Ad-hoc 安装包：
+
+```bash
+ALLOW_ADHOC_RELEASE=1 ./scripts/package-release.sh 0.1.10
 ```
 
 ## 许可证
