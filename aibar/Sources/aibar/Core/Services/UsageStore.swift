@@ -289,9 +289,10 @@ final class UsageStore: ObservableObject {
     }
 
     /// A deterministic, non-sensitive dataset for UI checks and README assets.
-    /// It is available only with `--demo`; ordinary launches always inspect the
-    /// user's local records instead.
-    private static func demoPayload() -> UsagePayload {
+    /// It drives the app only with `--demo` — ordinary launches always inspect
+    /// the user's local records instead — and is reachable directly so the
+    /// documentation images can be rendered from the same numbers.
+    static func demoPayload() -> UsagePayload {
         let now = Date()
         let calendar = Calendar(identifier: .gregorian)
         let daily = (0..<112).map { offset -> DailyPoint in
@@ -357,9 +358,11 @@ final class UsageStore: ObservableObject {
             ],
             subscriptionPlan: "Pro",
             subscriptionActiveUntil: calendar.date(byAdding: .day, value: 19, to: now),
+            // One credit on each side of the ten-day line, so the heatmap shows
+            // both expiry markers: the quiet alarm and the red days-left cell.
             rateLimitResetCredits: RateLimitResetCredits(
-                availableCount: 1,
-                expiresAt: [resetBase + 13 * 86_400]
+                availableCount: 2,
+                expiresAt: [resetBase + 3 * 86_400, resetBase + 13 * 86_400]
             )
         )
     }

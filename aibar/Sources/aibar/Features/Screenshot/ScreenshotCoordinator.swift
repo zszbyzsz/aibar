@@ -22,14 +22,17 @@ final class ScreenshotCoordinator {
             return
         }
 
-        switch permissionFlow.nextAction(hasAccess: CGPreflightScreenCaptureAccess()) {
+        switch permissionFlow.nextAction(
+            hasAccess: CGPreflightScreenCaptureAccess(),
+            requestAccess: { CGRequestScreenCaptureAccess() }
+        ) {
         case .capture:
             break
-        case .requestAccess:
+        case .awaitPermission:
             // The system request is the only UI shown on the first attempt.
             // Presenting our own modal while TCC is prompting can put two
             // permission surfaces in competition after an application update.
-            guard CGRequestScreenCaptureAccess() else { return }
+            return
         case .showSettings:
             presentScreenRecordingPermissionError()
             return
@@ -45,7 +48,7 @@ final class ScreenshotCoordinator {
         // capture sound before the editor appears.
         process.arguments = ["-i", "-s", "-x", "-t", "png", destination.path]
         process.terminationHandler = { [weak self] process in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.finishCapture(process: process, destination: destination)
             }
         }
@@ -112,23 +115,32 @@ final class ScreenshotCoordinator {
 }
 
 /// Keeps the TCC prompt and the app's recovery guidance mutually exclusive.
-/// A process gets one system request; later attempts route a denial to System
-/// Settings. A newly granted permission always takes precedence immediately.
+/// A process initially leaves the system request as the only visible UI. Later
+/// attempts refresh TCC before treating the same preflight result as a denial,
+/// because macOS can keep returning a stale preflight value after the user
+/// enables Screen Recording in System Settings.
 struct ScreenCapturePermissionFlow {
     enum Action: Equatable {
         case capture
-        case requestAccess
+        case awaitPermission
         case showSettings
     }
 
     private var requestedAccess = false
 
-    mutating func nextAction(hasAccess: Bool) -> Action {
+    mutating func nextAction(
+        hasAccess: Bool,
+        requestAccess: () -> Bool
+    ) -> Action {
         if hasAccess { return .capture }
-        guard requestedAccess else {
-            requestedAccess = true
-            return .requestAccess
-        }
-        return .showSettings
+
+        let wasAlreadyRequested = requestedAccess
+        requestedAccess = true
+
+        // CGRequestScreenCaptureAccess is also the authoritative refresh when
+        // a running app was just enabled in System Settings. Once TCC reports
+        // access, never let an earlier false preflight force the settings UI.
+        if requestAccess() { return .capture }
+        return wasAlreadyRequested ? .showSettings : .awaitPermission
     }
 }

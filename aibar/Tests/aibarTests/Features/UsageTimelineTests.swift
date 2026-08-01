@@ -60,4 +60,15 @@ final class UsageTimelineTests: XCTestCase {
         XCTAssertEqual(today?.cost, 1.25)
         XCTAssertEqual(timeline.resetExpiriesByDate["2026-08-13"], [first, second])
     }
+
+    func testResetExpiryUrgencyUsesAnExactTenDayWindow() {
+        let now = date(2026, 7, 31)
+        let inTenDays = now.addingTimeInterval(10 * 86_400).timeIntervalSince1970
+        let justBeyondTenDays = now.addingTimeInterval(10 * 86_400 + 1).timeIntervalSince1970
+
+        XCTAssertTrue(ResetExpiryUrgency.isDetailed(inTenDays, now: now))
+        XCTAssertFalse(ResetExpiryUrgency.isDetailed(justBeyondTenDays, now: now))
+        XCTAssertEqual(ResetExpiryUrgency.daysRemaining(inTenDays, now: now), 10)
+        XCTAssertEqual(L.resetExpiryWithinDays(.en, days: 10), "Expires in 10d")
+    }
 }

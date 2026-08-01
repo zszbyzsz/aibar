@@ -2,9 +2,9 @@
 
 [English](#english) · [简体中文](#简体中文)
 
-一个为 macOS 设计的本地 AI 使用情况仪表盘。aibar 把 Codex 的本地会话记录、配额和活动状态收进刘海下方与状态栏：需要时展开查看，不需要时保持安静。
+一个为 macOS 设计的本地 AI 用量仪表盘：aibar 把 Codex 的本地会话记录、配额和运行状态收进刘海下方与状态栏，并用 `fn + 4` 提供一套为 AI 协作准备的截图标注工具——需要时展开查看，不需要时保持安静。
 
-> 版本 0.1.8 · macOS 13 Ventura 或更高版本 · Apple Silicon
+> 版本 0.1.9 · macOS 13 Ventura 或更高版本 · Apple Silicon
 
 ![aibar dashboard](docs/images/dashboard-en.png)
 
@@ -12,15 +12,30 @@
 
 ### 功能一览
 
-- **刘海仪表盘**：将指针移到 MacBook 刘海区域，或点击状态栏中的趋势图标，即可展开仪表盘。它展示今日与本月的 API 等价费用、Token、最近会话、会话／周配额、每日使用热图、模型明细、常用项目和工具调用／文件改动统计。
-- **状态栏入口**：左键状态栏图标可直接显示或隐藏仪表盘；右键可开关运行胶囊、开始截图或退出应用。
-- **运行状态胶囊**：在刘海下方显示 Codex 正在进行的工作。每个胶囊显示项目、模型、当前阶段、耗时和上下文 Token；悬停可展开多个并行任务，点击可回到对应的 Codex 对话。任务确认完成后会短暂显示结果，避免把内部回合切换误报为完成。
-- **为 AI 协作优化的截图**：按 `fn + 4` 后拖拽选择区域，进入标注编辑器。可用方框、箭头、圆形、自由画笔和“文字 → 箭头”标记；每个标记自动编号，删除后会重新排序。支持选中删除、撤销、选择颜色、复制到剪贴板和保存图片，便于把明确、可引用的视觉反馈交给 AI 或同事。
-- **中英文界面**：首次启动跟随 macOS 语言；在仪表盘标题栏的语言菜单中选择“中文”或 “English”，选择会在下次启动后保留。
-- **分享卡片**：从仪表盘生成可分享的使用情况卡片，并选择不同的视觉样式。
+以下条目对应上方截图，自上而下即是仪表盘的排布。
+
+- **刘海仪表盘与状态栏入口**：把指针移到 MacBook 刘海区域，或点击状态栏的趋势图标即可展开；左键显示／隐藏仪表盘，右键可开关运行胶囊、开始截图或退出。应用不占用 Dock。
+- **顶部统计条**：今日与 30 天 API 等价费用、30 天 token、最近会话 token，每项都附带与前 7 天的涨跌。
+- **用量总览**：90 天用量热图（含 reset 额度到期标记），右侧是会话（5 小时）与周（7 天）配额，显示剩余百分比和重置倒计时。
+- **按模型统计**：每个模型的费用、token 占比和输入／缓存／输出单价，并标明价格来自实时同步还是离线缓存。
+- **最活跃项目**：按 token 排序的本地项目，点击展开可看模型占比，右上角同时给出工具调用与文件改动次数。
+- **运行状态胶囊**：在刘海下方显示 Codex 正在进行的工作——项目、模型、当前阶段、耗时和上下文 token。悬停可展开多个并行任务，点击可回到对应的 Codex 对话；任务确认完成后才会短暂显示结果，避免把内部回合切换误报为完成。
+- **为 AI 协作优化的截图**：按 `fn + 4` 拖拽选择区域，进入标注编辑器。可用方框、箭头、圆形、自由画笔和“文字 → 箭头”标记；每个标记自动编号，删除后会重新排序。支持选中删除、撤销、选择颜色、复制到剪贴板和保存图片，便于把明确、可引用的视觉反馈交给 AI 或同事。
+- **订阅到期徽章**：读取本地 Codex 登录凭据中的 ChatGPT 订阅信息，在标题栏右上角显示续费日期与剩余天数。
+- **中英文界面与分享卡片**：首次启动跟随 macOS 语言，可在仪表盘标题栏切换，选择会保留到下次启动；分享按钮可生成不同视觉样式的用量卡片。
 - **安全自动更新**：启动时及之后每 6 小时检查 GitHub Releases。右键状态栏图标后选择“检查更新”，若有可用版本，会在 SHA-256 校验完成后自动安装并重启。更新包还必须和当前应用拥有相同的 Bundle ID 与 Developer ID 签名，才能保留 macOS 的屏幕录制等隐私授权；签名不一致时会拒绝自动替换，避免静默失去授权。
-- **本地优先**：Codex 的会话与活动数据在本机读取、聚合。aibar 不上传提示词、响应内容或文件内容；模型定价信息会从公开价格页读取并在本地缓存，显示金额为 API 等价估算，不是账单。
-- **主动预加载**：启动（包括首次安装后首次打开）会立即读取本地会话，并并行刷新模型定价；无需先打开仪表盘即可尽快看到完整数据。
+- **本地优先与主动预加载**：会话与活动数据只在本机读取、聚合，aibar 不上传提示词、响应内容或文件内容；模型定价从公开价格页读取并在本地缓存，显示金额为 API 等价估算，不是账单。启动（包括首次安装后首次打开）会立即读取本地会话并并行刷新定价，无需先打开仪表盘。
+
+### 用量热图
+
+![用量热图](docs/images/heatmap-zh.png)
+
+热图是一条 90 天时间轴：按周一至周日分行、整周成列，颜色深浅表示当天的 API 等价费用，白色方框标记今天。可手动兑换的 reset 额度直接落在它到期的那一格上：
+
+- **闹钟标记**：10 天以后到期，作为安静的日历标记存在。
+- **红色格子**：10 天以内到期，格内直接写出剩余天数（例如 `3d`）。
+
+到期日期不再单独列出——标记所在的格子就是日期。悬停任意格子可以查看当天的费用与 token，或该格上 reset 的具体到期时间。
 
 ### 安装
 
@@ -56,13 +71,13 @@ brew update
 brew upgrade --cask aibar
 ```
 
-`v0.1.8` 及更早的安装包使用 Ad-hoc 签名，每个版本的 macOS 隐私身份都不同。
+`v0.1.9` 及更早的安装包使用 Ad-hoc 签名，每个版本的 macOS 隐私身份都不同。
 迁移到首个 Developer ID 签名版本时，需要重新授予一次屏幕录制权限；之后使用同一
 Developer ID 发布的更新会继续复用该授权。
 
 #### 直接下载安装包
 
-在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.8.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
+在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.9.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
 
 请使用同一 Developer ID 签名的正式发布版，以便自动更新后保持屏幕录制授权。若 macOS 阻止首次启动，请在 Finder 中按住 Control 点击应用并选择“打开”；若仍被隔离，可执行：
 
@@ -125,19 +140,34 @@ SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 
 ### Overview
 
-aibar is a local-first macOS dashboard for AI coding activity. It turns Codex session records, quota data, and live activity into a compact view beneath your MacBook notch and a convenient menu-bar control.
+aibar is a local-first macOS dashboard for AI coding usage: it folds Codex session records, quota data, and live activity into the space beneath your MacBook notch and the menu bar, and puts an annotation tool built for AI feedback on `fn + 4` — open when you need it, silent when you don't.
 
 ### Features
 
-- **Notch dashboard** — Hover over the notch or click the menu-bar trend icon to open a dashboard with today/month API-equivalent cost, tokens, recent-session usage, session and weekly limits, daily usage heatmap, model breakdown, top projects, and tool/file-change totals.
-- **Menu-bar controls** — Left-click to show or hide the dashboard. Right-click to toggle the activity capsule, start a screenshot, or quit.
+The list below follows the screenshot at the top of this page, from top to bottom.
+
+- **Notch dashboard and menu-bar controls** — Hover over the notch or click the menu-bar trend icon to open the dashboard. Left-click toggles it; right-click toggles the activity capsule, starts a screenshot, or quits. Nothing occupies the Dock.
+- **Stat strip** — Today's and 30-day API-equivalent cost, 30-day tokens, and latest-session tokens, each with its trend against the prior 7 days.
+- **Usage overview** — A 90-day usage heatmap with reset-credit expiry markers, beside session (5h) and weekly (7d) quota meters showing percent remaining and reset countdowns.
+- **By model** — Per-model cost, token share, and input/cached/output rates, labeled as live or cached pricing.
+- **Top projects** — Local projects ranked by tokens, expandable to per-model shares, with tool-call and file-edit totals alongside.
 - **Live activity capsule** — A floating capsule under the notch reports active Codex work: project, model, phase, elapsed time, and context tokens. Hover to expand simultaneous conversations; click a capsule to return to its Codex conversation. Completion notices are confirmed across polls so an internal turn boundary is not presented as a finished task.
 - **Screenshots made for AI feedback** — Press `fn + 4`, select a region, then annotate it with rectangles, arrows, ovals, freehand pen marks, or text-to-arrow callouts. Marks are automatically numbered and renumber after deletion. Select/delete, undo, color selection, copy, and save are all built in, making visual feedback precise and easy to reference.
-- **Chinese and English UI** — The initial language follows macOS. Switch between 中文 and English from the dashboard header; the choice persists across launches.
-- **Share cards** — Generate a shareable usage summary card with selectable styles.
+- **Subscription badge** — Renewal date and days left, read from the ChatGPT subscription info in the local Codex credentials.
+- **Bilingual UI and share cards** — The initial language follows macOS; switch between 中文 and English from the dashboard header and the choice persists across launches. The share button exports a usage summary card with selectable styles.
 - **Safe automatic updates** — Check GitHub Releases at launch and every six hours. Choose **Check for Updates** from the menu-bar icon’s right-click menu to download, verify, install, and relaunch when an update is available. Automatic replacement requires the same bundle ID and Developer ID signing identity, preserving macOS privacy consent such as Screen Recording; a mismatched signature is refused rather than silently changing that identity.
-- **Local first** — Session and activity data are read and aggregated on your Mac. aibar does not upload prompts, responses, or file contents. Public pricing data may be fetched and cached locally; displayed prices are API-equivalent estimates, not invoices.
-- **Eager loading** — At launch, including the first launch after installation, aibar immediately reads local sessions and refreshes model pricing in parallel, so the dashboard does not need to be opened before data begins loading.
+- **Local first and eager loading** — Session and activity data are read and aggregated on your Mac; aibar does not upload prompts, responses, or file contents. Public pricing data may be fetched and cached locally, and displayed prices are API-equivalent estimates, not invoices. At launch, including the first launch after installation, local sessions are read and pricing refreshed in parallel, so the dashboard does not need to be opened before data loads.
+
+### Usage heatmap
+
+![usage heatmap](docs/images/heatmap-en.png)
+
+The heatmap is a 90-day timeline laid out as full Mon–Sun weeks: color encodes that day's API-equivalent cost, and an outlined square marks today. Manually redeemable reset credits sit on the exact day they expire:
+
+- **Alarm marker** — expires more than 10 days out, kept as a quiet calendar marker.
+- **Red cell** — expires within 10 days, with the days left written straight into the cell (`3d`).
+
+Expiry dates are never spelled out separately: the marker's position on the grid is the date. Hover any cell for that day's cost and tokens, or for a reset's exact expiry time.
 
 ### Install
 
@@ -174,14 +204,14 @@ brew update
 brew upgrade --cask aibar
 ```
 
-Packages through `v0.1.8` are ad-hoc signed, so each version has a different
+Packages through `v0.1.9` are ad-hoc signed, so each version has a different
 macOS privacy identity. Moving to the first Developer ID signed release requires
 granting Screen Recording once more. Later releases signed by that same identity
 retain the grant.
 
 #### Download the app
 
-Download `aibar-0.1.8.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
+Download `aibar-0.1.9.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
 
 Use a release signed consistently with the same Developer ID to preserve Screen Recording consent through automatic updates. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. If it remains quarantined:
 

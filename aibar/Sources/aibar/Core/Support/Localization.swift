@@ -31,7 +31,14 @@ enum L {
             : "\(date): \(count) reset \(count == 1 ? "expires" : "expire") · \(times)"
     }
     static func resetExpiryLegend(_ lang: AppLanguage) -> String {
-        lang == .zh ? "reset 到期" : "Reset expiry"
+        lang == .zh ? "10 天后到期" : "Expires after 10d"
+    }
+    static func resetExpiryUrgentLegend(_ lang: AppLanguage) -> String {
+        lang == .zh ? "10 天内 · 剩余天数" : "Within 10d · days left"
+    }
+    static func resetExpiryWithinDays(_ lang: AppLanguage, days: Int) -> String {
+        if days == 0 { return lang == .zh ? "今天到期" : "Expires today" }
+        return lang == .zh ? "\(days) 天内到期" : "Expires in \(days)d"
     }
     static func less(_ lang: AppLanguage) -> String { lang == .zh ? "少" : "Less" }
     static func more(_ lang: AppLanguage) -> String { lang == .zh ? "多" : "More" }
