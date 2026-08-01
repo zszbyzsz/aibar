@@ -8,7 +8,7 @@ aibar 是一款本地优先的 macOS AI 编程用量仪表盘。它把 Codex 会
 
 > 版本 0.1.9 · macOS 13 Ventura 或更高版本 · Apple Silicon
 
-![aibar 仪表盘](docs/images/dashboard-en.png)
+![aibar 仪表盘](docs/images/dashboard-zh.png)
 
 ## 功能一览
 
@@ -23,6 +23,12 @@ aibar 是一款本地优先的 macOS AI 编程用量仪表盘。它把 Codex 会
 - **中英文界面与分享卡片**：首次启动跟随 macOS 语言，可在仪表盘标题栏切换 English／中文，选择会保留到下次启动；分享卡片支持多种视觉样式。
 - **安全自动更新**：启动时及之后每 6 小时检查 GitHub Releases。下载包会经过 SHA-256 校验，且只有 Bundle ID 与 Developer ID 签名身份一致时才会自动替换。
 - **本地优先**：会话与活动数据只在 Mac 本机读取和聚合，aibar 不上传提示词、响应内容或文件内容。显示金额为 API 等价估算，并非账单。
+
+## 刘海配额与运行胶囊
+
+![刘海左右配额与运行胶囊](docs/images/notch-capsule.png)
+
+两个紧凑的数字翼贴在物理刘海左右：左侧显示每周剩余配额，右侧显示 5 小时会话剩余配额。Codex 工作时，运行胶囊会出现在刘海下方，实时显示状态、项目、会话 token 和耗时；旗帜用于区分连续运行的 Goal 与普通单轮对话。悬停任一配额翼会暂时展开活动视图，点击胶囊可回到对应的 Codex 对话。
 
 ## 用量热图
 

@@ -24,6 +24,12 @@ A local-first macOS dashboard for AI coding usage. aibar brings Codex session re
 - **Safe automatic updates** — aibar checks GitHub Releases at launch and every six hours. Downloads are SHA-256 verified, and automatic replacement requires the same bundle ID and Developer ID signing identity.
 - **Local first** — Session and activity data are read and aggregated on your Mac. aibar does not upload prompts, responses, or file contents. Displayed costs are API-equivalent estimates, not invoices.
 
+## Notch controls and activity capsule
+
+![notch quota controls and activity capsule](docs/images/notch-capsule.png)
+
+The two compact wings sit directly beside the physical notch: the left number is the weekly quota remaining, and the right number is the 5-hour session quota remaining. The capsule appears below the notch while Codex is working and shows live status, project, session tokens, and elapsed time. A flag distinguishes a continuously running Goal from an ordinary turn. Hovering either quota wing temporarily expands the activity view; clicking the capsule returns to that Codex conversation.
+
 ## Usage heatmap
 
 ![usage heatmap](docs/images/heatmap-en.png)
