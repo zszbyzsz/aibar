@@ -317,13 +317,26 @@ final class UsageStore: ObservableObject {
     static func demoPayload() -> UsagePayload {
         let now = Date()
         let calendar = Calendar(identifier: .gregorian)
+        let tokenBands = [
+            0,
+            50_000_000,
+            120_000_000,
+            280_000_000,
+            520_000_000,
+            850_000_000,
+            1_400_000_000,
+            3_200_000_000,
+            5_600_000_000,
+            10_400_000_000,
+        ]
         let daily = (0..<112).map { offset -> DailyPoint in
             let date = calendar.date(byAdding: .day, value: offset - 111, to: now) ?? now
             let activity = (offset * 37 + 19) % 10
+            let tokens = tokenBands[activity]
             return DailyPoint(
                 date: UsageAggregation.isoDateOnly(date),
-                tokens: activity == 0 ? 0 : 45_000 + activity * 26_000,
-                cost: activity == 0 ? 0 : Double(activity) * 0.42
+                tokens: tokens,
+                cost: Double(tokens) / 1_000_000 * 0.78
             )
         }
         let resetBase = now.timeIntervalSince1970
@@ -333,41 +346,42 @@ final class UsageStore: ObservableObject {
             session: LimitView(usedPercent: 26, windowMinutes: 300, resetsAt: resetBase + 90 * 60, resetCount: 0),
             weekly: LimitView(usedPercent: 41, windowMinutes: 10_080, resetsAt: resetBase + 4 * 86_400, resetCount: 0),
             weeklyKind: "weekly",
-            latestSessionTokens: 185_000,
-            todayCost: 18.42,
-            todayInputTokens: 2_800_000,
-            todayCachedTokens: 1_700_000,
-            monthCost: 428.16,
-            monthTokens: 18_600_000,
-            monthInputTokens: 12_400_000,
-            monthCachedTokens: 6_200_000,
+            latestSessionTokens: 1_850_000_000,
+            todayCost: 1_092.00,
+            todayInputTokens: 900_000_000,
+            todayCachedTokens: 500_000_000,
+            monthCost: 52_462.80,
+            monthTokens: 67_260_000_000,
+            monthInputTokens: 43_000_000_000,
+            monthCachedTokens: 18_000_000_000,
             monthToolCalls: 482,
             monthFilesChanged: 97,
             monthUnpricedModels: [],
             models: [
-                ModelUsage(model: "gpt-5.6-sol", tokens: 11_800_000, apiEquivalentCost: 287.40, inputCost: 122.0, cachedCost: 25.4, outputCost: 140.0),
-                ModelUsage(model: "gpt-5.6-terra", tokens: 5_400_000, apiEquivalentCost: 108.26, inputCost: 42.0, cachedCost: 9.76, outputCost: 56.5),
-                ModelUsage(model: "gpt-5.5", tokens: 1_400_000, apiEquivalentCost: 32.50, inputCost: 15.0, cachedCost: 2.5, outputCost: 15.0),
+                ModelUsage(model: "gpt-5.6-sol", tokens: 42_000_000_000, apiEquivalentCost: 32_100.00, inputCost: 12_840.0, cachedCost: 3_210.0, outputCost: 16_050.0),
+                ModelUsage(model: "gpt-5.6-terra", tokens: 17_000_000_000, apiEquivalentCost: 14_250.00, inputCost: 5_700.0, cachedCost: 1_425.0, outputCost: 7_125.0),
+                ModelUsage(model: "gpt-5.5", tokens: 8_260_000_000, apiEquivalentCost: 6_112.80, inputCost: 2_445.12, cachedCost: 611.28, outputCost: 3_056.40),
             ],
             daily: daily,
             topProjects: [
-                ProjectUsage(name: "studio-app", tokens: 9_800_000, models: [
-                    ProjectModelUsage(model: "gpt-5.6-sol", tokens: 7_400_000),
-                    ProjectModelUsage(model: "gpt-5.6-terra", tokens: 2_400_000),
+                ProjectUsage(name: "studio-app", tokens: 31_600_000_000, apiEquivalentCost: 25_600.00, models: [
+                    ProjectModelUsage(model: "gpt-5.6-sol", tokens: 24_000_000_000, apiEquivalentCost: 19_200.00),
+                    ProjectModelUsage(model: "gpt-5.6-terra", tokens: 7_600_000_000, apiEquivalentCost: 6_400.00),
                 ]),
-                ProjectUsage(name: "design-system", tokens: 5_600_000, models: [
-                    ProjectModelUsage(model: "gpt-5.6-terra", tokens: 4_200_000),
-                    ProjectModelUsage(model: "gpt-5.6-sol", tokens: 1_400_000),
+                ProjectUsage(name: "design-system", tokens: 20_400_000_000, apiEquivalentCost: 16_100.00, models: [
+                    ProjectModelUsage(model: "gpt-5.6-terra", tokens: 13_000_000_000, apiEquivalentCost: 10_400.00),
+                    ProjectModelUsage(model: "gpt-5.6-sol", tokens: 7_400_000_000, apiEquivalentCost: 5_700.00),
                 ]),
-                ProjectUsage(name: "swift-lab", tokens: 1_900_000, models: [
-                    ProjectModelUsage(model: "gpt-5.5", tokens: 1_400_000),
-                    ProjectModelUsage(model: "gpt-5.6-terra", tokens: 500_000),
+                ProjectUsage(name: "swift-lab", tokens: 9_800_000_000, apiEquivalentCost: 7_800.00, models: [
+                    ProjectModelUsage(model: "gpt-5.5", tokens: 7_800_000_000, apiEquivalentCost: 6_200.00),
+                    ProjectModelUsage(model: "gpt-5.6-terra", tokens: 2_000_000_000, apiEquivalentCost: 1_600.00),
                 ]),
             ],
             activeProject: ProjectActivity(
                 project: "studio-app", model: "gpt-5.6-sol", phase: .editing,
                 lastActivityAt: now, startedAt: now.addingTimeInterval(-643),
-                sessionTokens: 185_000,
+                timingScope: .continuousGoal,
+                sessionTokens: 1_850_000_000,
                 sandboxPolicy: "workspace-write", approvalMode: "on-request",
                 threadID: "preview-thread"
             ),

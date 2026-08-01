@@ -209,8 +209,38 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
             name: NSApplication.didChangeScreenParametersNotification, object: nil
         )
 
-        poll()
-        restartPollTimer(interval: Self.pollIntervalCollapsed)
+        if CommandLine.arguments.contains("--demo") {
+            if !CommandLine.arguments.contains("--open") {
+                let now = Date()
+                rows = [
+                    CapsuleRow(
+                        id: "demo-active",
+                        threadID: nil,
+                        display: .active(
+                            ProjectActivity(
+                                project: "aibar",
+                                model: "gpt-5.6-sol",
+                                phase: .editing,
+                                lastActivityAt: now,
+                                startedAt: now.addingTimeInterval(-6_643),
+                                timingScope: .continuousGoal,
+                                sessionTokens: 1_850_000_000,
+                                sandboxPolicy: "workspace-write",
+                                approvalMode: "on-request",
+                                threadID: "preview-thread"
+                            )
+                        )
+                    )
+                ]
+            }
+            isEnabled = true
+            panel.setFrame(currentCapsuleFrame(), display: false)
+            targetFrame = panel.frame
+            updateVisibility()
+        } else {
+            poll()
+            restartPollTimer(interval: Self.pollIntervalCollapsed)
+        }
     }
 
     deinit {
