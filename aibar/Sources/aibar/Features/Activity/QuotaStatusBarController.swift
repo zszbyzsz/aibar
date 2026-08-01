@@ -10,6 +10,9 @@ final class QuotaStatusBarController: NSObject {
     private let store: UsageStore
     private let presentActivity: () -> Bool
     private let dismissActivity: () -> Void
+    /// Pure background fill for software screenshots of the camera gap.
+    /// It is ordered before every interactive surface and ignores the mouse.
+    private let cameraBridgePanel: NSPanel
     private let leftPanel: NSPanel
     private let rightPanel: NSPanel
     private var quotaSubscription: AnyCancellable?
@@ -40,10 +43,18 @@ final class QuotaStatusBarController: NSObject {
         self.store = store
         self.presentActivity = presentActivity
         self.dismissActivity = dismissActivity
+        cameraBridgePanel = Self.makePanel(ignoresMouseEvents: true)
         leftPanel = Self.makePanel()
         rightPanel = Self.makePanel()
         super.init()
 
+        cameraBridgePanel.level = NSWindow.Level(
+            rawValue: NSWindow.Level.statusBar.rawValue - 1
+        )
+        let bridgeView = NSView()
+        bridgeView.wantsLayer = true
+        bridgeView.layer?.backgroundColor = NSColor.black.cgColor
+        cameraBridgePanel.contentView = bridgeView
         leftPanel.contentView = NSHostingView(
             rootView: QuotaSideReadoutView(store: store, side: .left) { [weak self] side, hovering in
                 self?.setSideHovering(side, hovering: hovering)
@@ -114,9 +125,11 @@ final class QuotaStatusBarController: NSObject {
             // stack mutually exclusive without causing hover churn.
             leftPanel.alphaValue = 0
             rightPanel.alphaValue = 0
+            showCameraBridgeIfAvailable()
             leftPanel.orderFrontRegardless()
             rightPanel.orderFrontRegardless()
         } else {
+            cameraBridgePanel.orderOut(nil)
             leftPanel.orderOut(nil)
             rightPanel.orderOut(nil)
         }
@@ -131,10 +144,12 @@ final class QuotaStatusBarController: NSObject {
             return
         }
         guard readoutsVisible, !isScreenshotSuppressed else {
+            cameraBridgePanel.orderOut(nil)
             leftPanel.orderOut(nil)
             rightPanel.orderOut(nil)
             return
         }
+        showCameraBridgeIfAvailable()
         update(panel: leftPanel, hasQuota: store.payload.weekly?.usedPercent != nil)
         update(panel: rightPanel, hasQuota: store.payload.session?.usedPercent != nil)
     }
@@ -162,9 +177,30 @@ final class QuotaStatusBarController: NSObject {
         )
         leftPanel.setFrame(frames.left, display: true)
         rightPanel.setFrame(frames.right, display: true)
+        if let bridgeFrame = NotchGeometry.cameraBridgeFrame(on: screen, fallbackSize: Self.fallbackSize) {
+            cameraBridgePanel.setFrame(bridgeFrame, display: true)
+        } else {
+            cameraBridgePanel.orderOut(nil)
+        }
     }
 
-    private static func makePanel() -> NSPanel {
+    private func showCameraBridgeIfAvailable() {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first,
+              let bridgeFrame = NotchGeometry.cameraBridgeFrame(on: screen, fallbackSize: Self.fallbackSize),
+              store.payload.weekly?.usedPercent != nil || store.payload.session?.usedPercent != nil
+        else {
+            cameraBridgePanel.orderOut(nil)
+            return
+        }
+
+        cameraBridgePanel.setFrame(bridgeFrame, display: true)
+        cameraBridgePanel.alphaValue = 1
+        // Ordered first: quota wings are ordered immediately afterward, and
+        // the independently managed activity capsule remains above both.
+        cameraBridgePanel.orderFrontRegardless()
+    }
+
+    private static func makePanel(ignoresMouseEvents: Bool = false) -> NSPanel {
         let panel = NSPanel(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -178,6 +214,7 @@ final class QuotaStatusBarController: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.isMovable = false
         panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = ignoresMouseEvents
         panel.appearance = NSAppearance(named: .darkAqua)
         return panel
     }

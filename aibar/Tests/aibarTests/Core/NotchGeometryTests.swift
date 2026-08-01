@@ -57,4 +57,15 @@ final class NotchGeometryTests: XCTestCase {
             914, accuracy: 0.001
         )
     }
+
+    func testCameraBridgeUsesOnlyTheMenuBarThickness() {
+        XCTAssertEqual(
+            NotchGeometry.cameraBridgeFrame(
+                notch: notch,
+                screenFrame: screen,
+                physicalHeight: 22
+            ),
+            CGRect(x: 661, y: 960, width: 190, height: 22)
+        )
+    }
 }

@@ -49,6 +49,34 @@ enum NotchGeometry {
         )
     }
 
+    /// The software-only black bridge that stands in for the camera housing
+    /// in macOS screenshots. It uses only the system menu-bar thickness (not
+    /// the full safe area or hover target) and returns nil on displays without
+    /// a real notch, so an external monitor never gains a synthetic cutout.
+    static func cameraBridgeFrame(on screen: NSScreen, fallbackSize: CGSize) -> CGRect? {
+        guard screen.auxiliaryTopLeftArea != nil,
+              screen.auxiliaryTopRightArea != nil,
+              screen.safeAreaInsets.top > 0
+        else { return nil }
+
+        return cameraBridgeFrame(
+            notch: rect(on: screen, fallbackSize: fallbackSize),
+            screenFrame: screen.frame,
+            physicalHeight: min(screen.safeAreaInsets.top, NSStatusBar.system.thickness)
+        )
+    }
+
+    static func cameraBridgeFrame(
+        notch: CGRect, screenFrame: CGRect, physicalHeight: CGFloat
+    ) -> CGRect {
+        CGRect(
+            x: notch.minX,
+            y: screenFrame.maxY - physicalHeight,
+            width: notch.width,
+            height: physicalHeight
+        )
+    }
+
     /// The tallest a panel hung `gap` beneath `notch` may be drawn before it
     /// would run off the bottom of the display, floored at `minimum` so one
     /// row is always permitted even on an implausibly short screen.
