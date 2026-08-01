@@ -14,42 +14,85 @@ struct CodexActivityMonitor {
     private let databaseURL: URL
     private let rolloutStartCache = RolloutStartCache()
 
+    private enum GoalTimingEvent {
+        case active(startedAt: Date)
+        case inactive
+    }
+
+    private struct RolloutTimingScan {
+        var taskStartedAt: Date?
+        var goalEvent: GoalTimingEvent?
+    }
+
+    private struct ActivityTiming {
+        let startedAt: Date
+        let scope: ProjectActivity.TimingScope
+    }
+
     /// Polling happens on detached utility tasks. Cache the last resolved turn
     /// boundary per rollout so an old, multi-megabyte thread is scanned once;
     /// later polls only inspect bytes appended since that scan.
     private final class RolloutStartCache: @unchecked Sendable {
         private struct Entry {
             let fileSize: UInt64
-            let startedAt: Date?
+            let taskStartedAt: Date?
+            let goalStartedAt: Date?
         }
 
         private var entries: [String: Entry] = [:]
         private let lock = NSLock()
 
-        func latestTaskStartedAt(path: String, handle: FileHandle, fileSize: UInt64) -> Date? {
+        func activityTiming(path: String, handle: FileHandle, fileSize: UInt64) -> ActivityTiming? {
             lock.lock()
             defer { lock.unlock() }
 
             let previous = entries[path]
-            if previous?.fileSize == fileSize { return previous?.startedAt }
+            if previous?.fileSize == fileSize {
+                return Self.resolvedTiming(from: previous)
+            }
 
             // If the file only grew, the previous result remains valid unless
-            // the appended region contains a newer task boundary. Include the
-            // old trailing newline so the first new JSONL record is complete.
+            // the appended region contains a newer task or Goal boundary.
+            // Include the old trailing newline so the first new JSONL record
+            // is complete.
             let scanFloor: UInt64
             if let previous, fileSize > previous.fileSize {
                 scanFloor = previous.fileSize > 0 ? previous.fileSize - 1 : 0
             } else {
                 scanFloor = 0
             }
-            let appendedStart = CodexActivityMonitor.latestTaskStartedAt(
+            let scan = CodexActivityMonitor.rolloutTimingScan(
                 in: handle,
                 fileSize: fileSize,
                 scanFloor: scanFloor
             )
-            let resolved = appendedStart ?? (scanFloor > 0 ? previous?.startedAt : nil)
-            entries[path] = Entry(fileSize: fileSize, startedAt: resolved)
-            return resolved
+            let taskStartedAt = scan.taskStartedAt
+                ?? (scanFloor > 0 ? previous?.taskStartedAt : nil)
+            let goalStartedAt: Date?
+            if let goalEvent = scan.goalEvent {
+                switch goalEvent {
+                case .active(let startedAt): goalStartedAt = startedAt
+                case .inactive: goalStartedAt = nil
+                }
+            } else {
+                goalStartedAt = scanFloor > 0 ? previous?.goalStartedAt : nil
+            }
+            entries[path] = Entry(
+                fileSize: fileSize,
+                taskStartedAt: taskStartedAt,
+                goalStartedAt: goalStartedAt
+            )
+            return Self.resolvedTiming(from: entries[path])
+        }
+
+        private static func resolvedTiming(from entry: Entry?) -> ActivityTiming? {
+            if let startedAt = entry?.goalStartedAt {
+                return ActivityTiming(startedAt: startedAt, scope: .continuousGoal)
+            }
+            if let startedAt = entry?.taskStartedAt {
+                return ActivityTiming(startedAt: startedAt, scope: .currentTurn)
+            }
+            return nil
         }
     }
 
@@ -177,7 +220,10 @@ struct CodexActivityMonitor {
             // skipping it keeps the per-poll rollout reads bounded to the
             // handful of delegates that are genuinely live.
             guard now.timeIntervalSince(childUpdated) <= Self.activeWindow else { continue }
-            if case .active = rolloutSnapshot(forRolloutAt: child.rolloutPath).outcome {
+            if case .active = rolloutSnapshot(
+                forRolloutAt: child.rolloutPath,
+                resolveTiming: false
+            ).outcome {
                 delegateWorking = true
             }
         }
@@ -194,6 +240,7 @@ struct CodexActivityMonitor {
                 // `created_at_ms` made a newly submitted task in an old thread
                 // immediately appear hours or days old.
                 startedAt: ownSnapshot.startedAt ?? row.createdAt ?? lastActivity,
+                timingScope: ownSnapshot.timingScope,
                 // Falls back to the database's `tokens_used`, which is a
                 // lifetime cumulative sum across every turn ever sent for
                 // this thread (often tens of millions of tokens) — not the
@@ -348,18 +395,24 @@ struct CodexActivityMonitor {
     /// sent, grows without bound over a long session, and does not reflect
     /// what's actually sitting in context right now.
     private func rolloutSnapshot(
-        forRolloutAt path: String?
-    ) -> (outcome: RolloutOutcome, contextTokens: Int?, startedAt: Date?) {
+        forRolloutAt path: String?,
+        resolveTiming: Bool = true
+    ) -> (
+        outcome: RolloutOutcome,
+        contextTokens: Int?,
+        startedAt: Date?,
+        timingScope: ProjectActivity.TimingScope
+    ) {
         guard let path, FileManager.default.fileExists(atPath: path),
               let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path))
-        else { return (.active(.working), nil, nil) }
+        else { return (.active(.working), nil, nil, .currentTurn) }
         defer { try? handle.close() }
 
         let tailSize: UInt64 = 64 * 1_024
         let fileSize = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: fileSize > tailSize ? fileSize - tailSize : 0)
         guard let data = try? handle.readToEnd(), !data.isEmpty else {
-            return (.active(.working), nil, nil)
+            return (.active(.working), nil, nil, .currentTurn)
         }
 
         var resolvedOutcome: RolloutOutcome?
@@ -401,45 +454,69 @@ struct CodexActivityMonitor {
             if resolvedOutcome != nil, contextTokens != nil { break }
         }
         let outcome = resolvedOutcome ?? .active(.working)
-        let startedAt: Date?
-        if case .active = outcome {
-            startedAt = rolloutStartCache.latestTaskStartedAt(
-                path: path,
-                handle: handle,
-                fileSize: fileSize
-            )
-        } else {
-            startedAt = nil
+        guard resolveTiming else {
+            return (outcome, contextTokens, nil, .currentTurn)
         }
-        return (outcome, contextTokens, startedAt)
+        // Resolve timing even when the parent's own turn has just completed:
+        // the conversation can still be active while one of its delegates is
+        // running, and that row must retain the parent task/Goal clock rather
+        // than falling all the way back to the thread creation timestamp.
+        let timing = rolloutStartCache.activityTiming(
+            path: path,
+            handle: handle,
+            fileSize: fileSize
+        )
+        return (
+            outcome,
+            contextTokens,
+            timing?.startedAt,
+            timing?.scope ?? .currentTurn
+        )
     }
 
     /// Finds the current task's start without assuming it is inside the small
     /// activity tail above. A single long response can put `task_started`
     /// hundreds of kilobytes behind EOF, while the thread itself may be days
     /// old. Reading backward in bounded chunks avoids loading a large rollout
-    /// all at once and stops at the first (therefore latest) matching event.
+    /// all at once.
     static func latestTaskStartedAt(inRolloutAt path: String) -> Date? {
         guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
         defer { try? handle.close() }
         guard let fileSize = try? handle.seekToEnd() else { return nil }
-        return latestTaskStartedAt(in: handle, fileSize: fileSize, scanFloor: 0)
+        return rolloutTimingScan(in: handle, fileSize: fileSize, scanFloor: 0).taskStartedAt
     }
 
-    private static func latestTaskStartedAt(
+    /// Goal runs can span dozens of automatic Codex turns. Their persisted
+    /// `timeUsedSeconds` is active runtime (paused intervals excluded), so an
+    /// equivalent start instant is `updatedAt - timeUsedSeconds`. Views can
+    /// keep using a normal ticking `now - startedAt` clock while goal rows show
+    /// the whole run and ordinary rows still start at the latest task turn.
+    static func activityStartedAt(inRolloutAt path: String) -> Date? {
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
+        defer { try? handle.close() }
+        guard let fileSize = try? handle.seekToEnd() else { return nil }
+        let scan = rolloutTimingScan(in: handle, fileSize: fileSize, scanFloor: 0)
+        if case .active(let startedAt) = scan.goalEvent { return startedAt }
+        return scan.taskStartedAt
+    }
+
+    private static func rolloutTimingScan(
         in handle: FileHandle,
         fileSize: UInt64,
         scanFloor: UInt64
-    ) -> Date? {
+    ) -> RolloutTimingScan {
         let chunkSize: UInt64 = 64 * 1_024
-        let marker = Data(#""task_started""#.utf8)
+        let taskMarker = Data(#""task_started""#.utf8)
+        let goalUpdatedMarker = Data(#""thread_goal_updated""#.utf8)
+        let goalClearedMarker = Data(#""thread_goal_cleared""#.utf8)
         var upperBound = fileSize
         var newerLineFragment = Data()
+        var result = RolloutTimingScan()
 
         while upperBound > scanFloor {
             let lowerBound = upperBound - scanFloor > chunkSize ? upperBound - chunkSize : scanFloor
             try? handle.seek(toOffset: lowerBound)
-            guard var chunk = try? handle.read(upToCount: Int(upperBound - lowerBound)) else { return nil }
+            guard var chunk = try? handle.read(upToCount: Int(upperBound - lowerBound)) else { return result }
             chunk.append(newerLineFragment)
 
             let lines = chunk.split(separator: 0x0A, omittingEmptySubsequences: false)
@@ -447,18 +524,47 @@ struct CodexActivityMonitor {
             let completeLines = firstLineIsPartial ? lines.dropFirst() : lines[...]
 
             for line in completeLines.reversed() {
-                guard line.range(of: marker) != nil,
+                let mightContainTask = result.taskStartedAt == nil && line.range(of: taskMarker) != nil
+                let mightContainGoal = result.goalEvent == nil
+                    && (line.range(of: goalUpdatedMarker) != nil || line.range(of: goalClearedMarker) != nil)
+                guard mightContainTask || mightContainGoal,
                       let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
                       let payload = object["payload"] as? [String: Any],
-                      payload["type"] as? String == "task_started"
+                      let type = payload["type"] as? String
                 else { continue }
 
-                if let seconds = payload["started_at"] as? NSNumber, seconds.doubleValue > 0 {
-                    return Date(timeIntervalSince1970: seconds.doubleValue)
+                if result.taskStartedAt == nil, type == "task_started" {
+                    if let seconds = payload["started_at"] as? NSNumber, seconds.doubleValue > 0 {
+                        result.taskStartedAt = Date(timeIntervalSince1970: seconds.doubleValue)
+                    } else if let timestamp = object["timestamp"] as? String {
+                        result.taskStartedAt = Formatting.parseISODate(timestamp)
+                    }
                 }
-                if let timestamp = object["timestamp"] as? String {
-                    return Formatting.parseISODate(timestamp)
+
+                if result.goalEvent == nil, type == "thread_goal_cleared" {
+                    result.goalEvent = .inactive
+                } else if result.goalEvent == nil, type == "thread_goal_updated" {
+                    guard let goal = payload["goal"] as? [String: Any],
+                          goal["status"] as? String == "active"
+                    else {
+                        result.goalEvent = .inactive
+                        continue
+                    }
+                    let timeUsed = max(0, (goal["timeUsedSeconds"] as? NSNumber)?.doubleValue ?? 0)
+                    let updatedAt: Date?
+                    if let seconds = goal["updatedAt"] as? NSNumber {
+                        updatedAt = Date(timeIntervalSince1970: seconds.doubleValue)
+                    } else {
+                        updatedAt = (object["timestamp"] as? String).flatMap(Formatting.parseISODate)
+                    }
+                    if let updatedAt {
+                        result.goalEvent = .active(startedAt: updatedAt.addingTimeInterval(-timeUsed))
+                    } else {
+                        result.goalEvent = .inactive
+                    }
                 }
+
+                if result.taskStartedAt != nil, result.goalEvent != nil { return result }
             }
 
             if firstLineIsPartial, let first = lines.first {
@@ -468,6 +574,6 @@ struct CodexActivityMonitor {
             }
             upperBound = lowerBound
         }
-        return nil
+        return result
     }
 }

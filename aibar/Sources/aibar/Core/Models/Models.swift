@@ -154,6 +154,14 @@ struct ProjectActivity: Equatable {
         case editing
     }
 
+    enum TimingScope {
+        /// One ordinary submitted Codex task/turn.
+        case currentTurn
+        /// Accumulated active runtime for a persisted Goal across automatic
+        /// continuation turns; paused time is excluded by Codex itself.
+        case continuousGoal
+    }
+
     var project: String
     var model: String?
     var phase: Phase
@@ -162,6 +170,7 @@ struct ProjectActivity: Equatable {
     /// for many tasks, so this comes from the rollout's latest `task_started`
     /// event rather than the thread's original database creation time.
     var startedAt: Date
+    var timingScope: TimingScope = .currentTurn
     var sessionTokens: Int
     var sandboxPolicy: String
     var approvalMode: String

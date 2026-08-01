@@ -2,6 +2,19 @@ import XCTest
 @testable import aibar
 
 final class FormattingTests: XCTestCase {
+    func testActivityAgeDistinguishesCurrentTurnFromContinuousGoalRuntime() {
+        XCTAssertEqual(L.activityAge(.zh, seconds: 3_900), "本轮 1h5m")
+        XCTAssertEqual(
+            L.activityAge(.zh, seconds: 3_900, scope: .continuousGoal),
+            "Goal 累计 1h5m"
+        )
+        XCTAssertEqual(L.activityAge(.en, seconds: 42), "turn 42s")
+        XCTAssertEqual(
+            L.activityAge(.en, seconds: 42, scope: .continuousGoal),
+            "Goal total 42s"
+        )
+    }
+
     func testTokenLabelsUseReadableUnits() {
         XCTAssertEqual(Formatting.tokenLabel(999), "999")
         XCTAssertEqual(Formatting.tokenLabel(1_000), "1K")

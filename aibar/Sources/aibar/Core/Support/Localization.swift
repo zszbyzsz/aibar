@@ -128,11 +128,22 @@ enum L {
     static func activityTitle(_ lang: AppLanguage, project: String) -> String {
         lang == .zh ? "正在处理 · \(project)" : "Working · \(project)"
     }
-    static func activityAge(_ lang: AppLanguage, seconds: Int) -> String {
-        guard seconds >= 60 else { return lang == .zh ? "已运行 \(max(0, seconds))s" : "running \(max(0, seconds))s" }
+    static func activityAge(
+        _ lang: AppLanguage,
+        seconds: Int,
+        scope: ProjectActivity.TimingScope = .currentTurn
+    ) -> String {
+        let prefix: String
+        switch (lang, scope) {
+        case (.zh, .currentTurn): prefix = "本轮 "
+        case (.zh, .continuousGoal): prefix = "Goal 累计 "
+        case (.en, .currentTurn): prefix = "turn "
+        case (.en, .continuousGoal): prefix = "Goal total "
+        }
+        guard seconds >= 60 else { return "\(prefix)\(max(0, seconds))s" }
         let (hours, minutes) = Formatting.hoursAndMinutes(fromSeconds: seconds)
         let duration = hours > 0 ? "\(hours)h\(minutes)m" : "\(minutes)m"
-        return lang == .zh ? "已运行 \(duration)" : "running \(duration)"
+        return prefix + duration
     }
     static func activityPhase(_ lang: AppLanguage, phase: ProjectActivity.Phase) -> String {
         switch phase {

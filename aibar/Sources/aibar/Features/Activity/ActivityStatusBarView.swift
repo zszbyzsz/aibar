@@ -189,9 +189,15 @@ private struct ActivePillContent: View {
             LiveTokenReadout(tokens: activity.sessionTokens)
             Spacer(minLength: 4)
             TimelineView(.periodic(from: Self.tickAnchor, by: 1)) { context in
-                Text(Self.compactAge(context.date.timeIntervalSince(activity.startedAt)))
-                    .font(.system(size: 9.5).monospacedDigit())
-                    .foregroundStyle(Color.notchMutedInk)
+                HStack(spacing: 2) {
+                    if activity.timingScope == .continuousGoal {
+                        Image(systemName: "flag.fill")
+                            .font(.system(size: 7.5, weight: .semibold))
+                    }
+                    Text(Self.compactAge(context.date.timeIntervalSince(activity.startedAt)))
+                        .font(.system(size: 9.5).monospacedDigit())
+                }
+                .foregroundStyle(Color.notchMutedInk)
             }
         }
     }

@@ -24,7 +24,11 @@ struct ProjectActivityMonitorView: View {
                         Spacer(minLength: 8)
                         ProgressView()
                             .controlSize(.small)
-                        Text(L.activityAge(lang, seconds: Int(context.date.timeIntervalSince(activity.startedAt))))
+                        Text(L.activityAge(
+                            lang,
+                            seconds: Int(context.date.timeIntervalSince(activity.startedAt)),
+                            scope: activity.timingScope
+                        ))
                             .font(.system(size: 9.5).monospacedDigit())
                             .foregroundStyle(Color.notchMutedInk)
                     }
