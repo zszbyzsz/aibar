@@ -37,9 +37,16 @@ enum UsageHeatmapIntensity {
     }
 }
 
-/// Visual rewards layered on top of the token-driven heatmap color. The 10B
-/// tier is intentionally absent from the visible legend: discovering its
-/// double ring and glint is part of the reward.
+enum UsageMilestoneAdornment: Equatable {
+    case none
+    case dot
+    case sparkle
+    case pulsarCore
+}
+
+/// Visual rewards layered inside the token-driven heatmap cell. The 10B tier
+/// is intentionally absent from the visible legend: discovering its pulsar
+/// core is part of the reward.
 enum UsageMilestone: Int, Comparable {
     case none
     case billion
@@ -49,6 +56,16 @@ enum UsageMilestone: Int, Comparable {
     static let billionThreshold = 1_000_000_000
     static let fiveBillionThreshold = 5_000_000_000
     static let tenBillionThreshold = 10_000_000_000
+    static let visibleLegendTiers: [UsageMilestone] = [.billion, .fiveBillion]
+
+    var adornment: UsageMilestoneAdornment {
+        switch self {
+        case .none: return .none
+        case .billion: return .dot
+        case .fiveBillion: return .sparkle
+        case .tenBillion: return .pulsarCore
+        }
+    }
 
     static func level(for tokens: Int) -> UsageMilestone {
         switch tokens {
@@ -64,113 +81,45 @@ enum UsageMilestone: Int, Comparable {
     }
 }
 
-struct UsageMilestoneRun: Identifiable, Equatable {
-    let startRow: Int
-    let endRow: Int
-    let milestone: UsageMilestone
-
-    var id: Int { startRow }
-    var rowCount: Int { endRow - startRow + 1 }
-}
-
-/// Calendar days run vertically inside each week column. Adjacent milestone
-/// cells therefore become one framed streak, using the strongest reward found
-/// in that streak. A week turn starts a new visual group because Sunday and
-/// Monday are not adjacent on screen.
-enum UsageMilestoneGrouping {
-    static func runs(in week: [DailyPoint?]) -> [UsageMilestoneRun] {
-        var result: [UsageMilestoneRun] = []
-        var startRow: Int?
-        var strongest = UsageMilestone.none
-
-        func finish(at endRow: Int) {
-            guard let startRow else { return }
-            result.append(
-                UsageMilestoneRun(startRow: startRow, endRow: endRow, milestone: strongest)
-            )
-        }
-
-        for row in week.indices {
-            let milestone = UsageMilestone.level(for: week[row]?.tokens ?? 0)
-            if milestone == .none {
-                if startRow != nil { finish(at: row - 1) }
-                startRow = nil
-                strongest = .none
-            } else {
-                if startRow == nil { startRow = row }
-                strongest = max(strongest, milestone)
-            }
-        }
-        if startRow != nil { finish(at: week.count - 1) }
-        return result
-    }
-}
-
-/// Four short strokes preserve the square's heatmap fill while giving high-
-/// usage days a crisp, celebratory frame.
-private struct MilestoneCorners: Shape {
-    func path(in rect: CGRect) -> Path {
-        let segment = min(rect.width, rect.height) * 0.28
-        var path = Path()
-
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY + segment))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX + segment, y: rect.minY))
-
-        path.move(to: CGPoint(x: rect.maxX - segment, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + segment))
-
-        path.move(to: CGPoint(x: rect.maxX, y: rect.maxY - segment))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.maxX - segment, y: rect.maxY))
-
-        path.move(to: CGPoint(x: rect.minX + segment, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - segment))
-
-        return path
-    }
-}
-
 private struct UsageMilestoneDecoration: View {
     let milestone: UsageMilestone
 
-    private static let cornerBlue = Color(red: 0.180, green: 0.490, blue: 1.000)
     private static let brightCyan = Color(red: 0.080, green: 0.910, blue: 1.000)
+    private static let icyCore = Color(red: 0.830, green: 0.970, blue: 1.000)
 
+    @ViewBuilder
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            if milestone >= .fiveBillion {
-                RoundedRectangle(cornerRadius: 5)
-                    .stroke(Self.brightCyan, lineWidth: milestone == .tenBillion ? 1.2 : 1.5)
-                    .padding(-2)
-                    .shadow(color: Self.brightCyan.opacity(0.75), radius: 3)
-            }
-
-            if milestone == .tenBillion {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Self.brightCyan.opacity(0.85), lineWidth: 1)
-                    .padding(-4)
-
+            switch milestone.adornment {
+            case .none:
+                EmptyView()
+            case .dot:
+                Circle()
+                    .fill(Self.brightCyan)
+                    .frame(width: 3.5, height: 3.5)
+                    .padding(3)
+            case .sparkle:
                 Image(systemName: "sparkle")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(Color(red: 0.520, green: 0.890, blue: 1.000))
-                    .shadow(color: Self.brightCyan, radius: 3)
-                    .offset(x: 4, y: -4)
-            } else {
-                MilestoneCorners()
-                    .stroke(
-                        milestone == .fiveBillion ? Self.brightCyan : Self.cornerBlue,
-                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
-                    )
-                    .padding(-1)
-                    .shadow(
-                        color: (milestone == .fiveBillion ? Self.brightCyan : Self.cornerBlue).opacity(0.75),
-                        radius: milestone == .fiveBillion ? 3 : 2
-                    )
+                    .font(.system(size: 6, weight: .bold))
+                    .foregroundStyle(Self.icyCore)
+                    .padding(2.5)
+            case .pulsarCore:
+                ZStack {
+                    Circle()
+                        .stroke(Self.brightCyan.opacity(0.95), lineWidth: 1)
+                        .frame(width: 10, height: 10)
+                    Circle()
+                        .fill(Self.icyCore)
+                        .frame(width: 4, height: 4)
+                        .shadow(color: Self.brightCyan.opacity(0.9), radius: 1.5)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        // Guarantees every reward remains inside the 18pt heatmap square,
+        // including the pulsar core's restrained inner shadow.
+        .clipShape(RoundedRectangle(cornerRadius: 4))
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
@@ -388,48 +337,35 @@ struct UsageChartView: View {
 
                 HStack(spacing: Self.cellSpacing) {
                     ForEach(weeks.indices, id: \.self) { col in
-                        let milestoneRuns = UsageMilestoneGrouping.runs(in: weeks[col])
-                        ZStack(alignment: .topLeading) {
-                            VStack(spacing: Self.cellSpacing) {
-                                ForEach(0..<7, id: \.self) { row in
-                                    let point = weeks[col][row]
-                                    let expiries = resetExpiries(for: point)
-                                    let isToday = point?.date == timeline.todayKey
-                                    ZStack {
-                                        RoundedRectangle(cornerRadius: 4)
-                                            .fill(cellColor(point))
-                                        if !expiries.isEmpty {
-                                            resetMarker(for: expiries)
-                                        }
+                        VStack(spacing: Self.cellSpacing) {
+                            ForEach(0..<7, id: \.self) { row in
+                                let point = weeks[col][row]
+                                let expiries = resetExpiries(for: point)
+                                let isToday = point?.date == timeline.todayKey
+                                let milestone = UsageMilestone.level(for: point?.tokens ?? 0)
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(cellColor(point))
+                                    if !expiries.isEmpty {
+                                        resetMarker(for: expiries)
+                                    } else if milestone != .none {
+                                        UsageMilestoneDecoration(milestone: milestone)
                                     }
-                                        .frame(width: Self.cellSize, height: Self.cellSize)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 4)
-                                                .strokeBorder(
-                                                    isToday
-                                                        ? Color.notchInk
-                                                        : (point != nil && point?.id == hovered?.id ? Color.notchAccent : Color.clear),
-                                                    lineWidth: isToday ? 2 : 1.5
-                                                )
-                                        )
-                                        .onHover { isHovering in
-                                            guard let point else { return }
-                                            hovered = isHovering ? point : (hovered?.id == point.id ? nil : hovered)
-                                        }
                                 }
-                            }
-
-                            ForEach(milestoneRuns) { run in
-                                UsageMilestoneDecoration(milestone: run.milestone)
-                                    .frame(
-                                        width: Self.cellSize,
-                                        height: CGFloat(run.rowCount) * Self.cellSize
-                                            + CGFloat(run.rowCount - 1) * Self.cellSpacing
+                                    .frame(width: Self.cellSize, height: Self.cellSize)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .strokeBorder(
+                                                isToday
+                                                    ? Color.notchInk
+                                                    : (point != nil && point?.id == hovered?.id ? Color.notchAccent : Color.clear),
+                                                lineWidth: isToday ? 2 : 1.5
+                                            )
                                     )
-                                    .offset(
-                                        y: CGFloat(run.startRow) * (Self.cellSize + Self.cellSpacing)
-                                    )
-                                    .zIndex(1)
+                                    .onHover { isHovering in
+                                        guard let point else { return }
+                                        hovered = isHovering ? point : (hovered?.id == point.id ? nil : hovered)
+                                    }
                             }
                         }
                     }
@@ -450,8 +386,9 @@ struct UsageChartView: View {
                             .frame(width: 12, height: 12)
                     }
                     Text(L.more(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                    milestoneLegend(.billion, label: "1B+")
-                    milestoneLegend(.fiveBillion, label: "5B+")
+                    ForEach(UsageMilestone.visibleLegendTiers, id: \.self) { milestone in
+                        milestoneLegend(milestone, label: milestone == .billion ? "1B+" : "5B+")
+                    }
                     Spacer(minLength: 0)
                 }
 

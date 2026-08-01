@@ -31,24 +31,16 @@ final class UsageTimelineTests: XCTestCase {
         XCTAssertEqual(UsageMilestone.level(for: 10_000_000_000), .tenBillion)
     }
 
-    func testConsecutiveMilestonesShareOneFrameUsingTheStrongestTier() {
-        let week: [DailyPoint?] = [
-            nil,
-            DailyPoint(date: "2026-07-27", tokens: 1_200_000_000, cost: 0),
-            DailyPoint(date: "2026-07-28", tokens: 5_400_000_000, cost: 0),
-            DailyPoint(date: "2026-07-29", tokens: 10_730_000_000, cost: 0),
-            DailyPoint(date: "2026-07-30", tokens: 0, cost: 0),
-            DailyPoint(date: "2026-07-31", tokens: 1_100_000_000, cost: 0),
-            nil,
-        ]
+    func testUsageMilestonesMapToDotSparkleAndPulsarCore() {
+        XCTAssertEqual(UsageMilestone.none.adornment, .none)
+        XCTAssertEqual(UsageMilestone.billion.adornment, .dot)
+        XCTAssertEqual(UsageMilestone.fiveBillion.adornment, .sparkle)
+        XCTAssertEqual(UsageMilestone.tenBillion.adornment, .pulsarCore)
+    }
 
-        XCTAssertEqual(
-            UsageMilestoneGrouping.runs(in: week),
-            [
-                UsageMilestoneRun(startRow: 1, endRow: 3, milestone: .tenBillion),
-                UsageMilestoneRun(startRow: 5, endRow: 5, milestone: .billion),
-            ]
-        )
+    func testTenBillionMilestoneStaysOutOfTheVisibleLegend() {
+        XCTAssertEqual(UsageMilestone.visibleLegendTiers, [.billion, .fiveBillion])
+        XCTAssertFalse(UsageMilestone.visibleLegendTiers.contains(.tenBillion))
     }
 
     func testCompactResetLegendCopyRetainsTheTenDayBoundary() {
