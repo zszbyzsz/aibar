@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Top local project directories by 90-day token usage, from each session's cwd —
+/// Top local project directories by normalized 90-day token usage, from each session's cwd —
 /// makes it visible at a glance which workspace is actually driving spend. Each
 /// row gets a ranked, colored badge (same visual language as the model list)
 /// instead of a flat single-color bar, so the four projects read as a small
@@ -83,6 +83,12 @@ private struct ProjectRow: View {
         Self.modelPalette[index % Self.modelPalette.count]
     }
 
+    private var projectName: String {
+        project.name == UsageAggregation.unattributedProject
+            ? L.unattributedProject(lang)
+            : project.name
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Button(action: toggleExpansion) {
@@ -94,10 +100,15 @@ private struct ProjectRow: View {
                     }
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 6) {
-                            Text(project.name).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                            Text(projectName).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
                             Spacer(minLength: 4)
-                            Text(Formatting.tokenLabel(project.tokens)).font(.system(size: 11).monospacedDigit())
-                                .foregroundStyle(Color.notchMutedInk)
+                            VStack(alignment: .trailing, spacing: 1) {
+                                Text(Formatting.moneyLabel(project.apiEquivalentCost))
+                                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                                Text("\(Formatting.tokenLabel(project.tokens)) token")
+                                    .font(.system(size: 8.5).monospacedDigit())
+                                    .foregroundStyle(Color.notchMutedInk)
+                            }
                             if !project.models.isEmpty {
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 8, weight: .bold))
@@ -110,7 +121,7 @@ private struct ProjectRow: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(L.projectUsageAccessibilityLabel(lang, project: project.name, tokens: Formatting.tokenLabel(project.tokens)))
+            .accessibilityLabel(L.projectUsageAccessibilityLabel(lang, project: projectName, tokens: Formatting.tokenLabel(project.tokens)))
             .help(project.models.isEmpty ? "" : L.projectModelBreakdownHint(lang))
 
             if isExpanded, !project.models.isEmpty {
@@ -123,7 +134,13 @@ private struct ProjectRow: View {
                             Circle().fill(modelColor(at: index)).frame(width: 6, height: 6)
                             Text(model.model).font(.system(size: 10.5)).lineLimit(1)
                             Spacer(minLength: 8)
-                            Text(L.projectModelShare(lang, tokens: Formatting.tokenLabel(model.tokens), percent: Double(model.tokens) * 100.0 / Double(max(project.tokens, 1))))
+                            Text(
+                                L.projectModelShare(
+                                    lang,
+                                    tokens: Formatting.tokenLabel(model.tokens),
+                                    percent: Double(model.tokens) * 100.0 / Double(max(project.tokens, 1))
+                                ) + " · " + Formatting.moneyLabel(model.apiEquivalentCost)
+                            )
                                 .font(.system(size: 10).monospacedDigit())
                                 .foregroundStyle(Color.notchMutedInk)
                         }

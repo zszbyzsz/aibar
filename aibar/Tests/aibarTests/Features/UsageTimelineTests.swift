@@ -3,6 +3,25 @@ import XCTest
 @testable import aibar
 
 final class UsageTimelineTests: XCTestCase {
+    func testHeatmapIntensityIsDrivenByTokensAndMonotonicallyIncreases() {
+        let maximum = 900_000_000
+        let empty = UsageHeatmapIntensity.ratio(tokens: 0, maximum: maximum)
+        let small = UsageHeatmapIntensity.ratio(tokens: 9_000_000, maximum: maximum)
+        let medium = UsageHeatmapIntensity.ratio(tokens: 225_000_000, maximum: maximum)
+        let peak = UsageHeatmapIntensity.ratio(tokens: maximum, maximum: maximum)
+
+        XCTAssertEqual(empty, 0)
+        XCTAssertLessThan(empty, small)
+        XCTAssertLessThan(small, medium)
+        XCTAssertLessThan(medium, peak)
+        XCTAssertEqual(peak, 1)
+    }
+
+    func testHeatmapIntensityClampsValuesAboveMaximum() {
+        XCTAssertEqual(UsageHeatmapIntensity.ratio(tokens: 200, maximum: 100), 1)
+        XCTAssertEqual(UsageHeatmapIntensity.ratio(tokens: 100, maximum: 0), 0)
+    }
+
     private var utcCalendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

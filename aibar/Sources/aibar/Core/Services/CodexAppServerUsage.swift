@@ -5,23 +5,29 @@ import Darwin
 /// protocol. This deliberately asks Codex itself to authenticate the request:
 /// aibar never reads, copies, logs, or persists the OAuth access token.
 ///
-/// The local JSONL transcripts expose automatic quota-window deadlines, but
-/// not earned Full reset credits. `account/rateLimits/read` is the authoritative
-/// source for their available count and expiry details.
+/// The local JSONL transcripts expose raw request counters and automatic
+/// quota-window deadlines, but not the account-owned Profile token statistic
+/// or earned Full reset credits. `account/usage/read` and
+/// `account/rateLimits/read` are the authoritative sources for those values.
 enum CodexAppServerUsage {
     private static let initializeRequestID = 1
     private static let rateLimitsRequestID = 2
+    private static let accountUsageRequestID = 3
     /// A hard backstop for an unavailable or incompatible Codex process. The
     /// request normally completes in about two seconds and never blocks UI.
     private static let timeout: TimeInterval = 15
 
     static func fetchResetCredits() async -> RateLimitResetCredits? {
+        (await fetchAccountMetadata())?.resetCredits
+    }
+
+    static func fetchAccountMetadata() async -> CodexAccountMetadata? {
         await Task.detached(priority: .utility) {
-            fetchResetCreditsSynchronously()
+            fetchAccountMetadataSynchronously()
         }.value
     }
 
-    private static func fetchResetCreditsSynchronously() -> RateLimitResetCredits? {
+    private static func fetchAccountMetadataSynchronously() -> CodexAccountMetadata? {
         guard let executableURL = codexExecutableURL() else { return nil }
 
         let process = Process()
@@ -76,16 +82,30 @@ enum CodexAppServerUsage {
         var reader = JSONLineReader(handle: output.fileHandleForReading)
         guard reader.readResponse(requestID: initializeRequestID) != nil else { return nil }
 
-        guard send(["method": "initialized", "params": [:]], to: input.fileHandleForWriting),
-              send([
-                "id": rateLimitsRequestID,
-                "method": "account/rateLimits/read",
-                "params": [:],
-              ], to: input.fileHandleForWriting)
-        else { return nil }
+        guard send(["method": "initialized", "params": [:]], to: input.fileHandleForWriting) else { return nil }
 
-        guard let response = reader.readResponse(requestID: rateLimitsRequestID) else { return nil }
-        return parseResetCreditsResponse(response, requestID: rateLimitsRequestID)
+        var resetCredits: RateLimitResetCredits?
+        if send([
+            "id": rateLimitsRequestID,
+            "method": "account/rateLimits/read",
+            "params": [:],
+        ], to: input.fileHandleForWriting),
+           let response = reader.readResponse(requestID: rateLimitsRequestID) {
+            resetCredits = parseResetCreditsResponse(response, requestID: rateLimitsRequestID)
+        }
+
+        var tokenUsage: CodexAccountTokenUsage?
+        if send([
+            "id": accountUsageRequestID,
+            "method": "account/usage/read",
+            "params": [:],
+        ], to: input.fileHandleForWriting),
+           let response = reader.readResponse(requestID: accountUsageRequestID) {
+            tokenUsage = parseAccountUsageResponse(response, requestID: accountUsageRequestID)
+        }
+
+        guard resetCredits != nil || tokenUsage != nil else { return nil }
+        return CodexAccountMetadata(tokenUsage: tokenUsage, resetCredits: resetCredits)
     }
 
     /// Kept internal so the protocol's optional/count-only/detail-rich shapes
@@ -108,6 +128,34 @@ enum CodexAppServerUsage {
         return RateLimitResetCredits(
             availableCount: max(0, count),
             expiresAt: expiries.sorted()
+        )
+    }
+
+    /// Parses only the non-sensitive aggregate returned by Codex. Dates are
+    /// kept exactly as the service reports them because the first-party
+    /// Profile heatmap also treats these buckets as UTC date labels.
+    static func parseAccountUsageResponse(
+        _ data: Data,
+        requestID: Int = accountUsageRequestID
+    ) -> CodexAccountTokenUsage? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (root["id"] as? NSNumber)?.intValue == requestID,
+              let result = root["result"] as? [String: Any],
+              let summary = result["summary"] as? [String: Any]
+        else { return nil }
+
+        var dailyTokens: [String: Int] = [:]
+        for bucket in result["dailyUsageBuckets"] as? [[String: Any]] ?? [] {
+            guard let date = bucket["startDate"] as? String,
+                  let tokens = (bucket["tokens"] as? NSNumber)?.intValue
+            else { continue }
+            dailyTokens[date, default: 0] += max(0, tokens)
+        }
+
+        return CodexAccountTokenUsage(
+            dailyTokens: dailyTokens,
+            lifetimeTokens: (summary["lifetimeTokens"] as? NSNumber)?.intValue,
+            peakDailyTokens: (summary["peakDailyTokens"] as? NSNumber)?.intValue
         )
     }
 

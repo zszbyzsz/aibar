@@ -30,6 +30,40 @@ enum Formatting {
         return "\(value)"
     }
 
+    /// Compact token value with exactly four significant digits. The unit is
+    /// selected independently of the precision, so large daily averages stay
+    /// short while retaining useful differences (`1.303B`, `1.353M`, etc.).
+    static func fourSignificantTokenLabel(_ value: Double) -> String {
+        let nonnegative = max(0, value)
+        guard nonnegative > 0 else { return "0" }
+
+        let scaled: Double
+        let suffix: String
+        if nonnegative >= 1_000_000_000 {
+            scaled = nonnegative / 1_000_000_000
+            suffix = "B"
+        } else if nonnegative >= 1_000_000 {
+            scaled = nonnegative / 1_000_000
+            suffix = "M"
+        } else if nonnegative >= 1_000 {
+            scaled = nonnegative / 1_000
+            suffix = "K"
+        } else {
+            scaled = nonnegative
+            suffix = ""
+        }
+
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = false
+        formatter.usesSignificantDigits = true
+        formatter.minimumSignificantDigits = 4
+        formatter.maximumSignificantDigits = 4
+        let number = formatter.string(from: NSNumber(value: scaled)) ?? "0"
+        return number + suffix
+    }
+
     static func moneyLabel(_ value: Double) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency

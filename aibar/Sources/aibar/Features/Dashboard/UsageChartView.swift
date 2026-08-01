@@ -24,6 +24,19 @@ enum ResetExpiryUrgency {
     }
 }
 
+/// Maps authoritative daily token totals to heatmap intensity. Square-root
+/// scaling keeps the ordering strictly tied to token volume while preventing
+/// one unusually large day from making every other active day look empty.
+/// This is a presentation transform only: hover text continues to show the
+/// exact token count.
+enum UsageHeatmapIntensity {
+    static func ratio(tokens: Int, maximum: Int) -> Double {
+        guard tokens > 0, maximum > 0 else { return 0 }
+        let linearRatio = min(1, Double(tokens) / Double(maximum))
+        return linearRatio.squareRoot()
+    }
+}
+
 /// A fixed-size 90-day window whose right edge advances to the furthest known
 /// Full reset expiry. With no reset it ends today; with an expiry 13 days out,
 /// for example, it naturally shows 76 historical days, today, and 13 future
@@ -126,16 +139,14 @@ struct UsageChartView: View {
         return stride(from: 0, to: cells.count, by: 7).map { Array(cells[$0..<$0 + 7]) }
     }
 
-    private var maxCost: Double { max(daily.map(\.cost).max() ?? 0, 0.01) }
+    private var maxTokens: Int { daily.map(\.tokens).max() ?? 0 }
 
     private func cellColor(_ point: DailyPoint?, ratioOverride: Double? = nil) -> Color {
         if let ratioOverride { return ratioOverride <= 0 ? Color.notchRule : Color.notchAccent.opacity(0.28 + 0.72 * ratioOverride) }
         guard let point else { return .clear }
-        // A day can have real token activity priced at exactly $0 (an unpriced
-        // or free model) — that must still read as "used a little", not fall
-        // back to the same blank tint as a day with no activity at all.
-        guard point.cost > 0 || point.tokens > 0 else { return Color.notchRule }
-        return Color.notchAccent.opacity(0.28 + 0.72 * (point.cost / maxCost))
+        guard point.tokens > 0 else { return Color.notchRule }
+        let intensity = UsageHeatmapIntensity.ratio(tokens: point.tokens, maximum: maxTokens)
+        return Color.notchAccent.opacity(0.28 + 0.72 * intensity)
     }
 
     private func resetExpiries(for point: DailyPoint?) -> [Double] {

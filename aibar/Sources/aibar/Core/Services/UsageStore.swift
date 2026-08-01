@@ -72,11 +72,13 @@ final class UsageStore: ObservableObject {
     /// is a floor under how often refreshRemoteQuotaOnVisit() will actually
     /// hit the network, independent of how often the caller asks.
     private static let claudeOAuthMinInterval: TimeInterval = 60
-    /// Snapshot of earned Codex Full reset credits. Kept outside `payload` so
-    /// a fast local transcript refresh cannot briefly erase remote metadata.
+    /// Snapshot of Codex's server-owned token activity and Full reset credits.
+    /// Kept outside `payload` so a fast local transcript refresh cannot
+    /// briefly replace official daily values with raw JSONL counters.
+    private var codexAccountTokenUsage: CodexAccountTokenUsage?
     private var codexResetCredits: RateLimitResetCredits?
-    private var lastCodexResetCreditsFetch: Date?
-    private static let codexResetCreditsMinInterval: TimeInterval = 5 * 60
+    private var lastCodexAccountMetadataFetch: Date?
+    private static let codexAccountMetadataMinInterval: TimeInterval = 60
 
     init() {
         demoMode = CommandLine.arguments.contains("--demo")
@@ -95,7 +97,7 @@ final class UsageStore: ObservableObject {
         // data wait for it: `refresh(eagerly:)` publishes a fallback-priced
         // scan first and replaces it as soon as the live rates arrive.
         Task { await refresh(eagerly: true) }
-        refreshCodexResetCreditsIfNeeded()
+        refreshCodexAccountMetadataIfNeeded()
         timer = Timer.scheduledTimer(withTimeInterval: Self.refreshInterval, repeats: true) { [weak self] _ in
             Task { await self?.refresh() }
         }
@@ -128,6 +130,10 @@ final class UsageStore: ObservableObject {
         let fingerprint = codexStateFingerprint()
         guard fingerprint != lastCodexStateFingerprint else { return }
         lastCodexStateFingerprint = fingerprint
+        // A completed response changes both the local attribution sample and
+        // the server-owned daily total. Refresh both sides of that equation;
+        // the account fetch has its own one-minute throttle below.
+        refreshCodexAccountMetadataIfNeeded()
         Task { await refresh() }
     }
 
@@ -237,8 +243,16 @@ final class UsageStore: ObservableObject {
     /// and recalculates totals from that cache.
     private func codexPayload(prices: [String: ModelPrice], status: String) async -> UsagePayload {
         let scanner = codexScanner
+        let accountUsage = codexAccountTokenUsage
         var result = await Task.detached(priority: .userInitiated) {
-            (scanner.scan(prices: prices, priceStatus: status), SubscriptionInfo.read())
+            (
+                scanner.scan(
+                    prices: prices,
+                    priceStatus: status,
+                    accountUsage: accountUsage
+                ),
+                SubscriptionInfo.read()
+            )
         }.value
         result.0.pricingRates = prices
         result.0.subscriptionPlan = result.1?.planType
@@ -255,7 +269,7 @@ final class UsageStore: ObservableObject {
     func refreshRemoteQuotaOnVisit() {
         guard !demoMode else { return }
         if provider == .codex {
-            refreshCodexResetCreditsIfNeeded()
+            refreshCodexAccountMetadataIfNeeded()
             return
         }
         guard provider == .claudeCode else { return }
@@ -272,19 +286,27 @@ final class UsageStore: ObservableObject {
     }
 
     /// Uses Codex's own authenticated app-server process. No credential data
-    /// crosses into aibar; only the returned count and expiry timestamp do.
-    private func refreshCodexResetCreditsIfNeeded() {
+    /// crosses into aibar; only aggregate token buckets/reset metadata do.
+    private func refreshCodexAccountMetadataIfNeeded() {
         guard provider == .codex else { return }
-        if let last = lastCodexResetCreditsFetch,
-           Date().timeIntervalSince(last) < Self.codexResetCreditsMinInterval {
+        if let last = lastCodexAccountMetadataFetch,
+           Date().timeIntervalSince(last) < Self.codexAccountMetadataMinInterval {
             return
         }
-        lastCodexResetCreditsFetch = Date()
+        lastCodexAccountMetadataFetch = Date()
         Task {
-            guard let credits = await CodexAppServerUsage.fetchResetCredits() else { return }
-            codexResetCredits = credits
+            guard let metadata = await CodexAppServerUsage.fetchAccountMetadata() else { return }
+            let tokenUsageChanged = metadata.tokenUsage != nil && metadata.tokenUsage != codexAccountTokenUsage
+            if let tokenUsage = metadata.tokenUsage { codexAccountTokenUsage = tokenUsage }
+            if let resetCredits = metadata.resetCredits { codexResetCredits = resetCredits }
             guard provider == .codex else { return }
-            payload.rateLimitResetCredits = credits
+            if let resetCredits = metadata.resetCredits {
+                payload.rateLimitResetCredits = resetCredits
+            }
+            // Token totals, model/project attribution, and all derived prices
+            // are one calculation. Rebuild them atomically instead of briefly
+            // publishing a payload whose cards disagree with each other.
+            if tokenUsageChanged { await refresh() }
         }
     }
 

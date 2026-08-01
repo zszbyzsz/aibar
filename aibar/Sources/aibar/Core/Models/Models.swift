@@ -127,6 +127,9 @@ struct ProjectUsage: Identifiable {
     var id: String { name }
     var name: String
     var tokens: Int
+    /// API-equivalent cost after this project's locally observed model and
+    /// token-category mix is normalized to the authoritative account total.
+    var apiEquivalentCost: Double = 0
     /// Models that contributed to this project's 90-day token total, ordered
     /// from most to least used. Keeping this alongside the project total lets
     /// the dashboard explain a project's spend without needing another scan.
@@ -137,6 +140,7 @@ struct ProjectModelUsage: Identifiable {
     var id: String { model }
     var model: String
     var tokens: Int
+    var apiEquivalentCost: Double = 0
 }
 
 /// A deliberately narrow, privacy-preserving view of a recently active Codex
@@ -247,6 +251,22 @@ struct RateLimitResetCredits: Equatable {
     /// One timestamp per available detail row returned by Codex. The backend
     /// may expose only `availableCount`, in which case this remains empty.
     var expiresAt: [Double]
+}
+
+/// Codex's account-level token activity, returned by `account/usage/read`.
+/// This is the same server-owned statistic shown by Codex's Profile heatmap;
+/// it intentionally remains separate from the raw local transcript counters,
+/// whose token categories are still needed for model/project attribution and
+/// API-equivalent cost estimates.
+struct CodexAccountTokenUsage: Equatable {
+    var dailyTokens: [String: Int]
+    var lifetimeTokens: Int?
+    var peakDailyTokens: Int?
+}
+
+struct CodexAccountMetadata: Equatable {
+    var tokenUsage: CodexAccountTokenUsage?
+    var resetCredits: RateLimitResetCredits?
 }
 
 struct UsagePayload {

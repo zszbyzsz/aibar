@@ -307,7 +307,11 @@ final class UsageScanner {
     /// Full scan: reuses cached per-file summaries for transcripts whose mtime/size are
     /// unchanged and retains every locally available transcript, including archives.
     /// The cache-version bump deliberately rebuilds older end-of-session summaries.
-    func scan(prices: [String: ModelPrice], priceStatus: String) -> UsagePayload {
+    func scan(
+        prices: [String: ModelPrice],
+        priceStatus: String,
+        accountUsage: CodexAccountTokenUsage? = nil
+    ) -> UsagePayload {
         var cache = readCache()
         let paths = allJSONLFiles()
 
@@ -339,7 +343,8 @@ final class UsageScanner {
 
         return UsageAggregation.buildPayload(
             cacheFiles: cache.files, prices: prices, priceStatus: priceStatus,
-            defaultPlan: "Codex", normalizeModel: normalizedModel
+            defaultPlan: "Codex", normalizeModel: normalizedModel,
+            accountUsage: accountUsage
         )
     }
 

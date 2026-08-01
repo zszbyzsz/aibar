@@ -9,6 +9,13 @@ final class FormattingTests: XCTestCase {
         XCTAssertEqual(Formatting.tokenLabel(2_000_000_000), "2.00B")
     }
 
+    func testFourSignificantTokenLabelUsesAdaptiveUnits() {
+        XCTAssertEqual(Formatting.fourSignificantTokenLabel(1_303_000_000), "1.303B")
+        XCTAssertEqual(Formatting.fourSignificantTokenLabel(1_353_000), "1.353M")
+        XCTAssertEqual(Formatting.fourSignificantTokenLabel(1_353_000 / 30), "45.10K")
+        XCTAssertEqual(Formatting.fourSignificantTokenLabel(0), "0")
+    }
+
     func testParsesISO8601TimestampsWithAndWithoutFractions() {
         XCTAssertNotNil(Formatting.parseISODate("2026-07-24T12:30:45Z"))
         XCTAssertNotNil(Formatting.parseISODate("2026-07-24T12:30:45.123Z"))

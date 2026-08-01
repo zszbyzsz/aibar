@@ -7,21 +7,116 @@ import Foundation
 /// differs between the two CLIs' very different JSONL schemas, so this is the
 /// one place daily rollup, model breakdown, and cost math live.
 enum UsageAggregation {
+    /// Project bucket used when Codex reports account activity for a day for
+    /// which this Mac has no matching local transcript. Keeping that usage
+    /// explicit is more accurate than silently assigning it to a known cwd.
+    static let unattributedProject = "__account_unattributed__"
+
+    /// Normalizes a set of local model/category samples to one authoritative
+    /// daily total. Local transcripts remain the only available source for
+    /// model and input/cache/output proportions, but their repeated-context
+    /// totals are not allowed to change the account-owned total.
+    static func normalizedUsageByModel(
+        _ local: [String: [String: Int]],
+        targetTokens: Int
+    ) -> [String: [String: Int]] {
+        normalizedBuckets(local, targetTokens: targetTokens, fallbackKey: "unknown")
+    }
+
+    private static func normalizedBuckets(
+        _ local: [String: [String: Int]],
+        targetTokens: Int,
+        fallbackKey: String
+    ) -> [String: [String: Int]] {
+        let target = max(0, targetTokens)
+        guard target > 0 else { return [:] }
+
+        let positive = local.filter { ($0.value["total_tokens"] ?? 0) > 0 }
+        let localTotal = positive.values.reduce(0) { $0 + ($1["total_tokens"] ?? 0) }
+        guard localTotal > 0 else { return [fallbackKey: ["total_tokens": target]] }
+
+        let factor = Double(target) / Double(localTotal)
+        let allocations = proportionalAllocation(
+            positive.mapValues { $0["total_tokens"] ?? 0 },
+            target: target
+        )
+        var result: [String: [String: Int]] = [:]
+        for key in positive.keys.sorted() {
+            guard let usage = positive[key],
+                  let allocatedTotal = allocations[key],
+                  allocatedTotal > 0
+            else { continue }
+            var scaled: [String: Int] = [:]
+            for (counter, value) in usage where counter != "total_tokens" {
+                scaled[counter] = max(0, Int((Double(value) * factor).rounded()))
+            }
+            scaled["total_tokens"] = allocatedTotal
+            clampNestedCounters(&scaled)
+            result[key] = scaled
+        }
+        return result
+    }
+
+    /// Largest-remainder apportionment makes every displayed dimension add up
+    /// to the exact server total, including awkward non-divisible ratios.
+    private static func proportionalAllocation(
+        _ weights: [String: Int],
+        target: Int
+    ) -> [String: Int] {
+        let positive = weights.filter { $0.value > 0 }
+        let weightTotal = positive.values.reduce(0, +)
+        guard target > 0, weightTotal > 0 else { return [:] }
+
+        var result: [String: Int] = [:]
+        var remainders: [(key: String, value: Double)] = []
+        var allocated = 0
+        for key in positive.keys.sorted() {
+            let exact = Double(positive[key]!) * Double(target) / Double(weightTotal)
+            let floorValue = Int(exact.rounded(.down))
+            result[key] = floorValue
+            allocated += floorValue
+            remainders.append((key, exact - Double(floorValue)))
+        }
+        remainders.sort {
+            $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value
+        }
+        for item in remainders.prefix(max(0, target - allocated)) {
+            result[item.key, default: 0] += 1
+        }
+        return result
+    }
+
+    private static func clampNestedCounters(_ usage: inout [String: Int]) {
+        let input = max(0, usage["input_tokens"] ?? 0)
+        let cacheWrite = min(input, max(0, usage["cache_write_input_tokens"] ?? 0))
+        let cached = min(input - cacheWrite, max(0, usage["cached_input_tokens"] ?? 0))
+        usage["input_tokens"] = input
+        usage["cache_write_input_tokens"] = cacheWrite
+        usage["cached_input_tokens"] = cached
+
+        let output = max(0, usage["output_tokens"] ?? 0)
+        usage["output_tokens"] = output
+        usage["reasoning_output_tokens"] = min(output, max(0, usage["reasoning_output_tokens"] ?? 0))
+        usage["long_context_input_tokens"] = min(input, max(0, usage["long_context_input_tokens"] ?? 0))
+        usage["long_context_cache_write_input_tokens"] = min(cacheWrite, max(0, usage["long_context_cache_write_input_tokens"] ?? 0))
+        usage["long_context_cached_input_tokens"] = min(cached, max(0, usage["long_context_cached_input_tokens"] ?? 0))
+        usage["long_context_output_tokens"] = min(output, max(0, usage["long_context_output_tokens"] ?? 0))
+    }
+
     static func buildPayload(
         cacheFiles: [String: CachedEntry],
         prices: [String: ModelPrice],
         priceStatus: String,
         defaultPlan: String,
-        normalizeModel: (String?) -> String
+        normalizeModel: (String?) -> String,
+        accountUsage: CodexAccountTokenUsage? = nil,
+        calendarTimeZone: TimeZone = .current
     ) -> UsagePayload {
         let now = Date()
-        let calendar = Calendar(identifier: .gregorian)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = calendarTimeZone
         let todayStart = calendar.startOfDay(for: now)
         let monthStart = calendar.date(byAdding: .day, value: -29, to: todayStart)!
-        // Projects are an attribution view rather than a billing-period total,
-        // so retain a longer history here. The month cost/token/model totals
-        // deliberately continue to use `monthStart` below.
-        let projectStart = calendar.date(byAdding: .day, value: -89, to: todayStart)!
         // The heatmap spans further back than the "30-day" totals below it —
         // otherwise, at 30 days it only ever fills about a week's worth of
         // rows and leaves the card looking half-empty next to the taller
@@ -30,7 +125,7 @@ enum UsageAggregation {
         // 30-day rollup regardless of how far back the chart reaches.
         let heatmapDays = 112
         let heatmapStart = calendar.date(byAdding: .day, value: -(heatmapDays - 1), to: todayStart)!
-        let todayKey = isoDateOnly(todayStart)
+        let todayKey = isoDateOnly(todayStart, timeZone: calendarTimeZone)
 
         var todayByModel: [String: [String: Int]] = [:]
         var monthByModel: [String: [String: Int]] = [:]
@@ -40,17 +135,24 @@ enum UsageAggregation {
         var latestPlanAt = Date.distantPast
         var latestSessionTokens = 0
         var latestSessionAt = Date.distantPast
+        var latestSessionUsageByDate: [String: [String: [String: Int]]] = [:]
         var monthToolCalls = 0
         var monthFilesChanged = 0
         // Unlike the overall model list, this keeps the model dimension nested
         // under each project. A session has one cwd but can switch models, so
         // recording only `projectTokens` here would make the breakdown
         // impossible to reconstruct later.
-        var projectUsageByModel: [String: [String: Int]] = [:]
+        var projectUsageByDate: [String: [String: [String: [String: Int]]]] = [:]
 
-        func addProjectUsage(_ usageByModel: [String: [String: Int]], project: String) {
+        func addProjectUsage(
+            _ usageByModel: [String: [String: Int]],
+            project: String,
+            dateKey: String
+        ) {
             for (model, usage) in usageByModel {
-                projectUsageByModel[project, default: [:]][model, default: 0] += usage["total_tokens"] ?? 0
+                for (counter, value) in usage {
+                    projectUsageByDate[dateKey, default: [:]][project, default: [:]][model, default: [:]][counter, default: 0] += value
+                }
             }
         }
 
@@ -62,6 +164,9 @@ enum UsageAggregation {
             if ended >= latestSessionAt {
                 latestSessionAt = ended
                 latestSessionTokens = usage["total_tokens"] ?? 0
+                latestSessionUsageByDate = summary.dailyUsageByModel.isEmpty
+                    ? [isoDateOnly(ended, timeZone: calendarTimeZone): (summary.usageByModel.isEmpty ? ["unknown": usage] : summary.usageByModel)]
+                    : summary.dailyUsageByModel
             }
             if let planType = summary.planType {
                 let planAt = summary.planAt.flatMap(Formatting.parseISODate) ?? ended
@@ -102,27 +207,36 @@ enum UsageAggregation {
                 // Claude Code summaries and cache files from an older version
                 // do not carry per-event timestamps. Preserve their previous
                 // end-of-session behavior rather than dropping their data.
-                merge(byModel, into: &dailyByDate[isoDateOnly(ended), default: [:]])
+                let endedKey = isoDateOnly(ended, timeZone: calendarTimeZone)
+                merge(byModel, into: &dailyByDate[endedKey, default: [:]])
                 if ended >= monthStart {
                     merge(byModel, into: &monthByModel)
                     monthToolCalls += summary.toolCallCount
                     monthFilesChanged += summary.filesChangedCount
                 }
-                if ended >= projectStart, let project = summary.project {
-                    addProjectUsage(byModel, project: project)
+                if ended >= heatmapStart {
+                    addProjectUsage(
+                        byModel,
+                        project: summary.project ?? Self.unattributedProject,
+                        dateKey: endedKey
+                    )
                 }
                 if ended >= todayStart { merge(byModel, into: &todayByModel) }
                 continue
             }
 
             for (dateKey, eventUsageByModel) in usageByDate {
-                guard let eventDay = dateFromDayKey(dateKey) else { continue }
+                guard let eventDay = dateFromDayKey(dateKey, timeZone: calendarTimeZone) else { continue }
                 if eventDay >= heatmapStart { merge(eventUsageByModel, into: &dailyByDate[dateKey, default: [:]]) }
                 if eventDay >= monthStart {
                     merge(eventUsageByModel, into: &monthByModel)
                 }
-                if eventDay >= projectStart, let project = summary.project {
-                    addProjectUsage(eventUsageByModel, project: project)
+                if eventDay >= heatmapStart {
+                    addProjectUsage(
+                        eventUsageByModel,
+                        project: summary.project ?? Self.unattributedProject,
+                        dateKey: dateKey
+                    )
                 }
                 if dateKey == todayKey { merge(eventUsageByModel, into: &todayByModel) }
             }
@@ -139,6 +253,112 @@ enum UsageAggregation {
             for (model, modelUsage) in source {
                 for (key, value) in modelUsage {
                     target[model, default: [:]][key, default: 0] += value
+                }
+            }
+        }
+
+        func normalizedProjectDay(
+            _ local: [String: [String: [String: Int]]],
+            targetTokens: Int
+        ) -> [String: [String: [String: Int]]] {
+            var flat: [String: [String: Int]] = [:]
+            var identity: [String: (project: String, model: String)] = [:]
+            var pairs: [(project: String, model: String, usage: [String: Int])] = []
+            for (project, byModel) in local {
+                for (model, usage) in byModel {
+                    pairs.append((project, model, usage))
+                }
+            }
+            pairs.sort {
+                $0.project == $1.project ? $0.model < $1.model : $0.project < $1.project
+            }
+            for (index, pair) in pairs.enumerated() {
+                let key = String(index)
+                flat[key] = pair.usage
+                identity[key] = (pair.project, pair.model)
+            }
+            let fallbackKey = "fallback"
+            identity[fallbackKey] = (Self.unattributedProject, "unknown")
+            let normalized = Self.normalizedBuckets(
+                flat,
+                targetTokens: targetTokens,
+                fallbackKey: fallbackKey
+            )
+
+            var result: [String: [String: [String: Int]]] = [:]
+            for (key, usage) in normalized {
+                guard let bucket = identity[key] else { continue }
+                result[bucket.project, default: [:]][bucket.model] = usage
+            }
+            return result
+        }
+
+        var projectUsageByModel: [String: [String: [String: Int]]] = [:]
+        if let accountUsage, !accountUsage.dailyTokens.isEmpty {
+            let rawDailyByDate = dailyByDate
+            for offset in stride(from: heatmapDays - 1, through: 0, by: -1) {
+                let date = calendar.date(byAdding: .day, value: -offset, to: todayStart) ?? todayStart
+                let dateKey = isoDateOnly(date, timeZone: calendarTimeZone)
+                let normalizedProjects = normalizedProjectDay(
+                    projectUsageByDate[dateKey] ?? [:],
+                    targetTokens: accountUsage.dailyTokens[dateKey] ?? 0
+                )
+                var normalizedModels: [String: [String: Int]] = [:]
+                for byModel in normalizedProjects.values {
+                    merge(byModel, into: &normalizedModels)
+                }
+                // Project/model pairs are the canonical normalized dimension,
+                // so summing either card produces identical counters and cost.
+                // A model-only fallback is retained for old cache summaries
+                // that predate project attribution.
+                dailyByDate[dateKey] = normalizedModels.isEmpty
+                    ? Self.normalizedUsageByModel(
+                        rawDailyByDate[dateKey] ?? [:],
+                        targetTokens: accountUsage.dailyTokens[dateKey] ?? 0
+                    )
+                    : normalizedModels
+
+                if offset <= 89 {
+                    for (project, byModel) in normalizedProjects {
+                        merge(byModel, into: &projectUsageByModel[project, default: [:]])
+                    }
+                }
+            }
+
+            // Rebuild every derived 30-day field from normalized daily data;
+            // otherwise total tokens would be official while model mix and
+            // price remained on the inflated transcript counter.
+            todayByModel = dailyByDate[todayKey] ?? [:]
+            monthByModel = [:]
+            for offset in stride(from: 29, through: 0, by: -1) {
+                let date = calendar.date(byAdding: .day, value: -offset, to: todayStart) ?? todayStart
+                let dateKey = isoDateOnly(date, timeZone: calendarTimeZone)
+                merge(dailyByDate[dateKey] ?? [:], into: &monthByModel)
+            }
+
+            // The server has no per-session dimension. Attribute the latest
+            // session its proportional share of each authoritative day, using
+            // the same local samples as the project/model split.
+            latestSessionTokens = 0
+            for (dateKey, sessionByModel) in latestSessionUsageByDate {
+                let sessionLocal = sessionByModel.values.reduce(0) { $0 + ($1["total_tokens"] ?? 0) }
+                let dayLocal = (rawDailyByDate[dateKey] ?? [:]).values.reduce(0) {
+                    $0 + ($1["total_tokens"] ?? 0)
+                }
+                guard sessionLocal > 0, dayLocal > 0 else { continue }
+                let target = accountUsage.dailyTokens[dateKey] ?? 0
+                latestSessionTokens += min(
+                    target,
+                    max(0, Int((Double(target) * Double(sessionLocal) / Double(dayLocal)).rounded()))
+                )
+            }
+        } else {
+            for offset in stride(from: 89, through: 0, by: -1) {
+                let date = calendar.date(byAdding: .day, value: -offset, to: todayStart) ?? todayStart
+                let dateKey = isoDateOnly(date, timeZone: calendarTimeZone)
+                let byProject = projectUsageByDate[dateKey] ?? [:]
+                for (project, byModel) in byProject {
+                    merge(byModel, into: &projectUsageByModel[project, default: [:]])
                 }
             }
         }
@@ -205,7 +425,7 @@ enum UsageAggregation {
         var daily: [DailyPoint] = []
         for offset in stride(from: heatmapDays - 1, through: 0, by: -1) {
             let date = calendar.date(byAdding: .day, value: -offset, to: now)!
-            let dateKey = isoDateOnly(date)
+            let dateKey = isoDateOnly(date, timeZone: calendarTimeZone)
             let usageModels = dailyByDate[dateKey] ?? [:]
             let (cost, _) = pricedCost(usageModels)
             let tokens = usageModels.values.reduce(0) { $0 + ($1["total_tokens"] ?? 0) }
@@ -223,12 +443,24 @@ enum UsageAggregation {
         for (project, usageByModel) in projectUsageByModel {
             var models: [ProjectModelUsage] = []
             for (model, usage) in usageByModel {
-                models.append(ProjectModelUsage(model: model, tokens: usage))
+                let cost: Double
+                if let price = prices[normalizeModel(model)] {
+                    let breakdown = categoryCost(usage, price: price)
+                    cost = breakdown.input + breakdown.cached + breakdown.output
+                } else {
+                    cost = 0
+                }
+                models.append(ProjectModelUsage(
+                    model: model,
+                    tokens: usage["total_tokens"] ?? 0,
+                    apiEquivalentCost: cost
+                ))
             }
             models.sort { $0.tokens == $1.tokens ? $0.model < $1.model : $0.tokens > $1.tokens }
             projects.append(ProjectUsage(
                 name: project,
                 tokens: models.reduce(0) { $0 + $1.tokens },
+                apiEquivalentCost: models.reduce(0) { $0 + $1.apiEquivalentCost },
                 models: models
             ))
         }
@@ -285,19 +517,19 @@ enum UsageAggregation {
         )
     }
 
-    static func isoDateOnly(_ date: Date) -> String {
+    static func isoDateOnly(_ date: Date, timeZone: TimeZone = .current) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = .current
+        formatter.timeZone = timeZone
         return formatter.string(from: date)
     }
 
-    private static func dateFromDayKey(_ key: String) -> Date? {
+    private static func dateFromDayKey(_ key: String, timeZone: TimeZone) -> Date? {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = .current
+        formatter.timeZone = timeZone
         return formatter.date(from: key)
     }
 }

@@ -18,7 +18,9 @@ enum L {
         lang == .zh ? "近 \(days) 天" : "Last \(days) days"
     }
     static func heatmapTimelineHint(_ lang: AppLanguage, days: Int) -> String {
-        lang == .zh ? "\(days) 天时间轴 · 方框标记今天" : "\(days)-day timeline · outlined square is today"
+        lang == .zh
+            ? "\(days) 天时间轴 · 颜色表示 token · 方框标记今天"
+            : "\(days)-day timeline · color shows tokens · outlined square is today"
     }
     static func heatmapResetHover(
         _ lang: AppLanguage,
@@ -74,6 +76,9 @@ enum L {
     }
     static func projectModelBreakdownTitle(_ lang: AppLanguage) -> String {
         lang == .zh ? "模型占比" : "Model share"
+    }
+    static func unattributedProject(_ lang: AppLanguage) -> String {
+        lang == .zh ? "未归属（仅账号数据）" : "Unattributed (account only)"
     }
     static func projectModelBreakdownHint(_ lang: AppLanguage) -> String {
         lang == .zh ? "点击查看模型 token 占比" : "Click to view model token shares"
@@ -193,6 +198,9 @@ enum L {
     static func peakNd(_ lang: AppLanguage, days: Int, money: String) -> String {
         lang == .zh ? "近 \(days) 天峰值 \(money)" : "\(days)d peak \(money)"
     }
+    static func averageDailyTokens30d(_ lang: AppLanguage, tokens: String) -> String {
+        lang == .zh ? "30 天日均 \(tokens) token" : "30d daily avg \(tokens) tokens"
+    }
     static func pricingSynced(_ lang: AppLanguage) -> String { lang == .zh ? "价格已同步" : "Pricing synced" }
     static func pricingPartial(_ lang: AppLanguage) -> String {
         lang == .zh ? "部分价格使用离线缓存" : "Some prices use offline fallback"
@@ -217,13 +225,13 @@ enum L {
 
     static func footnotePriced(_ lang: AppLanguage) -> String {
         lang == .zh
-            ? "按公开 API 费率估算，含 cache 读取折扣及写入费率；不是订阅扣费或账单。"
-            : "Estimated from public API rates with cache pricing; not subscription usage or a bill."
+            ? "账号每日 token 为官方值；模型、项目及输入/cache/输出占比来自本地会话，并按公开 API 费率估算；不是订阅账单。"
+            : "Official daily account tokens; model, project, and input/cache/output shares come from local sessions and use public API rates. Not a bill."
     }
     static func footnoteUnpriced(_ lang: AppLanguage, models: String) -> String {
         lang == .zh
-            ? "按公开 API 费率估算；\(models) 未定价，仅统计 token；不是订阅扣费或账单。"
-            : "Estimated from public API rates; \(models) unpriced and token-only; not a bill."
+            ? "账号每日 token 为官方值，本地会话用于模型/项目归属；\(models) 未定价，仅统计 token；不是订阅账单。"
+            : "Official daily account tokens with local model/project attribution; \(models) unpriced and token-only. Not a bill."
     }
 
     static func refreshNow(_ lang: AppLanguage) -> String { lang == .zh ? "立即刷新" : "Refresh Now" }

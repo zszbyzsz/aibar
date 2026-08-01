@@ -2,6 +2,106 @@ import XCTest
 @testable import aibar
 
 final class UsageAggregationTests: XCTestCase {
+    func testOfficialNormalizationPreservesModelRatiosAndExactTotal() {
+        let normalized = UsageAggregation.normalizedUsageByModel(
+            [
+                "gpt-sol": ["input_tokens": 900, "cached_input_tokens": 100, "total_tokens": 900],
+                "gpt-terra": ["input_tokens": 100, "total_tokens": 100],
+            ],
+            targetTokens: 110
+        )
+
+        XCTAssertEqual(normalized["gpt-sol"]?["total_tokens"], 99)
+        XCTAssertEqual(normalized["gpt-terra"]?["total_tokens"], 11)
+        XCTAssertEqual(normalized.values.reduce(0) { $0 + ($1["total_tokens"] ?? 0) }, 110)
+        XCTAssertEqual(normalized["gpt-sol"]?["cached_input_tokens"], 11)
+    }
+
+    func testOfficialAccountUsageAtomicallyRecalculatesModelsProjectsAndCosts() {
+        let utc = TimeZone(secondsFromGMT: 0)!
+        let now = Date()
+        let day = UsageAggregation.isoDateOnly(now, timeZone: utc)
+        let solUsage = [
+            "input_tokens": 9_000_000,
+            "cached_input_tokens": 1_800_000,
+            "output_tokens": 1_000_000,
+            "total_tokens": 10_000_000,
+        ]
+        let terraUsage = [
+            "input_tokens": 1_000_000,
+            "output_tokens": 0,
+            "total_tokens": 1_000_000,
+        ]
+        func entry(project: String, model: String, usage: [String: Int], endedAt: Date) -> CachedEntry {
+            let summary = FileSummary(
+                endedAt: Formatting.isoTimestamp(from: endedAt),
+                usage: usage,
+                usageByModel: [model: usage],
+                dailyUsageByModel: [day: [model: usage]],
+                limitsByKind: [:], planType: nil, planAt: nil,
+                project: project
+            )
+            return CachedEntry(mtime: endedAt.timeIntervalSince1970, size: 1, summary: summary)
+        }
+        let official = CodexAccountTokenUsage(
+            dailyTokens: [day: 1_100_000],
+            lifetimeTokens: nil,
+            peakDailyTokens: 1_100_000
+        )
+        let prices = [
+            "gpt-sol": ModelPrice(input: 1, cachedInput: 0.5, output: 10, source: "test", status: "live"),
+            "gpt-terra": ModelPrice(input: 2, cachedInput: 0.2, output: 12, source: "test", status: "live"),
+        ]
+
+        let payload = UsageAggregation.buildPayload(
+            cacheFiles: [
+                "sol.jsonl": entry(project: "alpha", model: "gpt-sol", usage: solUsage, endedAt: now),
+                "terra.jsonl": entry(project: "beta", model: "gpt-terra", usage: terraUsage, endedAt: now.addingTimeInterval(-1)),
+            ],
+            prices: prices,
+            priceStatus: "live",
+            defaultPlan: "Codex",
+            normalizeModel: { $0 ?? "unknown" },
+            accountUsage: official,
+            calendarTimeZone: utc
+        )
+
+        XCTAssertEqual(payload.monthTokens, 1_100_000)
+        XCTAssertEqual(payload.models.reduce(0) { $0 + $1.tokens }, 1_100_000)
+        XCTAssertEqual(payload.topProjects.reduce(0) { $0 + $1.tokens }, 1_100_000)
+        XCTAssertEqual(payload.models.map(\.tokens), [1_000_000, 100_000])
+        XCTAssertEqual(payload.topProjects.map(\.tokens), [1_000_000, 100_000])
+        XCTAssertEqual(payload.monthInputTokens, 1_000_000)
+        XCTAssertEqual(payload.monthCachedTokens, 180_000)
+        XCTAssertEqual(payload.monthCost, 2.01, accuracy: 0.000_001)
+        XCTAssertEqual(payload.models.reduce(0) { $0 + $1.apiEquivalentCost }, payload.monthCost, accuracy: 0.000_001)
+        XCTAssertEqual(payload.topProjects.reduce(0) { $0 + $1.apiEquivalentCost }, payload.monthCost, accuracy: 0.000_001)
+        XCTAssertEqual(payload.daily.first { $0.date == day }?.cost ?? 0, payload.monthCost, accuracy: 0.000_001)
+    }
+
+    func testAccountOnlyUsageRemainsExplicitlyUnattributed() {
+        let utc = TimeZone(secondsFromGMT: 0)!
+        let day = UsageAggregation.isoDateOnly(Date(), timeZone: utc)
+        let official = CodexAccountTokenUsage(
+            dailyTokens: [day: 42_000],
+            lifetimeTokens: nil,
+            peakDailyTokens: 42_000
+        )
+
+        let payload = UsageAggregation.buildPayload(
+            cacheFiles: [:], prices: [:], priceStatus: "fallback",
+            defaultPlan: "Codex", normalizeModel: { $0 ?? "unknown" },
+            accountUsage: official, calendarTimeZone: utc
+        )
+
+        XCTAssertEqual(payload.monthTokens, 42_000)
+        XCTAssertEqual(payload.models.map(\.model), ["unknown"])
+        XCTAssertEqual(payload.models.map(\.tokens), [42_000])
+        XCTAssertEqual(payload.topProjects.map(\.name), [UsageAggregation.unattributedProject])
+        XCTAssertEqual(payload.topProjects.map(\.tokens), [42_000])
+        XCTAssertEqual(payload.monthCost, 0)
+    }
+
     func testBuildPayloadCalculatesPricedUsageAndProjects() {
         let now = Date()
         let day = UsageAggregation.isoDateOnly(now)

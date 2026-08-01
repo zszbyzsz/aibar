@@ -106,7 +106,14 @@ struct DashboardView: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(Color.notchCardFill))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.notchAccent.opacity(0.16), lineWidth: 1))
 
-        SectionCard(title: L.usageOverviewTitle(lang), icon: "chart.bar.fill", trailing: L.peakNd(lang, days: UsageTimeline.dayCount, money: Formatting.moneyLabel(usageTimeline.points.map(\.cost).max() ?? 0))) {
+        SectionCard(
+            title: L.usageOverviewTitle(lang),
+            icon: "chart.bar.fill",
+            trailing: L.averageDailyTokens30d(
+                lang,
+                tokens: Formatting.fourSignificantTokenLabel(Double(data.monthTokens) / 30)
+            )
+        ) {
             // Session/weekly used to be their own full-width cards up top;
             // they're squeezed down into compact quota blocks here instead,
             // filling the heatmap's right side rather than leaving it blank.
