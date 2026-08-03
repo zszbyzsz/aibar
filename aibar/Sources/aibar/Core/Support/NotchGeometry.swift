@@ -7,24 +7,102 @@ import AppKit
 /// (the notch "growing" a capsule beneath it) rather than two panels that
 /// merely happen to sit nearby.
 enum NotchGeometry {
+    /// Extra hover room immediately below the camera housing. The system safe
+    /// area describes the physical cutout only; extending downward makes the
+    /// otherwise invisible trigger much easier to acquire without changing
+    /// the width reported by macOS.
+    private static let hoverExtensionBelow: CGFloat = 10
+
+    /// The display that should own every notch-attached surface. Accessory
+    /// apps do not reliably have a key window, so `NSScreen.main` can be nil or
+    /// point at an external display. Prefer a real notched display and only
+    /// fall back to the normal main/first-screen behavior when no display
+    /// reports notch geometry.
+    static func targetScreen() -> NSScreen? {
+        if let main = NSScreen.main, physicalRect(on: main) != nil {
+            return main
+        }
+        return NSScreen.screens.first(where: { physicalRect(on: $0) != nil })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+    }
+
+    /// Exact physical camera-housing rect reported by macOS. The two
+    /// auxiliary areas are the usable menu-bar regions immediately to the left
+    /// and right of the housing, so the gap between their *coordinates* is the
+    /// authoritative width. Deriving it from the whole screen width or forcing
+    /// a minimum width makes different MacBook models and scaled resolutions
+    /// disagree with the actual cutout.
+    static func physicalRect(on screen: NSScreen) -> CGRect? {
+        physicalRect(
+            screenFrame: screen.frame,
+            safeAreaTop: screen.safeAreaInsets.top,
+            auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+            auxiliaryTopRightArea: screen.auxiliaryTopRightArea
+        )
+    }
+
+    /// Pure geometry counterpart used by tests and by `physicalRect(on:)`.
+    /// Auxiliary-area rectangles are in the global screen coordinate space,
+    /// which matters when the built-in display is not at origin `(0, 0)`.
+    static func physicalRect(
+        screenFrame: CGRect,
+        safeAreaTop: CGFloat,
+        auxiliaryTopLeftArea left: CGRect?,
+        auxiliaryTopRightArea right: CGRect?
+    ) -> CGRect? {
+        guard safeAreaTop.isFinite, safeAreaTop > 0,
+              let left, let right
+        else { return nil }
+
+        let minX = max(screenFrame.minX, left.maxX)
+        let maxX = min(screenFrame.maxX, right.minX)
+        let width = maxX - minX
+        guard minX.isFinite, maxX.isFinite, width.isFinite, width > 0 else {
+            return nil
+        }
+
+        return CGRect(
+            x: minX,
+            y: screenFrame.maxY - safeAreaTop,
+            width: width,
+            height: safeAreaTop
+        )
+    }
+
     /// Real notch geometry comes from the two auxiliary safe-area rects macOS
     /// reports beside the camera housing; the gap between them is the
     /// physical cutout. On a display without a notch, this falls back to a
     /// small centered placeholder of `fallbackSize` instead.
     static func rect(on screen: NSScreen, fallbackSize: CGSize) -> CGRect {
-        let frame = screen.frame
-        if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
-            let notchWidth = frame.width - left.width - right.width
-            let notchHeight = screen.safeAreaInsets.top
-            if notchWidth > 0, notchHeight > 0 {
-                let width = max(notchWidth, fallbackSize.width)
-                let height = notchHeight + 10
-                return CGRect(x: frame.midX - width / 2, y: frame.maxY - height, width: width, height: height)
-            }
+        hoverRect(
+            physicalRect: physicalRect(on: screen),
+            screenFrame: screen.frame,
+            fallbackSize: fallbackSize
+        )
+    }
+
+    static func hoverRect(
+        physicalRect: CGRect?,
+        screenFrame: CGRect,
+        fallbackSize: CGSize,
+        extensionBelow: CGFloat = hoverExtensionBelow
+    ) -> CGRect {
+        if let physicalRect {
+            let extensionBelow = max(0, extensionBelow)
+            return CGRect(
+                x: physicalRect.minX,
+                y: physicalRect.minY - extensionBelow,
+                width: physicalRect.width,
+                height: physicalRect.height + extensionBelow
+            )
         }
+
         return CGRect(
-            x: frame.midX - fallbackSize.width / 2, y: frame.maxY - fallbackSize.height,
-            width: fallbackSize.width, height: fallbackSize.height
+            x: screenFrame.midX - fallbackSize.width / 2,
+            y: screenFrame.maxY - fallbackSize.height,
+            width: fallbackSize.width,
+            height: fallbackSize.height
         )
     }
 
@@ -41,7 +119,7 @@ enum NotchGeometry {
         // hover target. The side readouts intentionally use the physical
         // safe-area height itself, as they live alongside—not below—the
         // camera housing.
-        let height = screen.safeAreaInsets.top > 0 ? screen.safeAreaInsets.top : notch.height
+        let height = physicalRect(on: screen)?.height ?? notch.height
         let y = screen.frame.maxY - height
         return (
             left: CGRect(x: notch.minX - width + inset, y: y, width: width, height: height),
@@ -53,16 +131,13 @@ enum NotchGeometry {
     /// in macOS screenshots. It uses only the system menu-bar thickness (not
     /// the full safe area or hover target) and returns nil on displays without
     /// a real notch, so an external monitor never gains a synthetic cutout.
-    static func cameraBridgeFrame(on screen: NSScreen, fallbackSize: CGSize) -> CGRect? {
-        guard screen.auxiliaryTopLeftArea != nil,
-              screen.auxiliaryTopRightArea != nil,
-              screen.safeAreaInsets.top > 0
-        else { return nil }
+    static func cameraBridgeFrame(on screen: NSScreen) -> CGRect? {
+        guard let physicalRect = physicalRect(on: screen) else { return nil }
 
         return cameraBridgeFrame(
-            notch: rect(on: screen, fallbackSize: fallbackSize),
+            notch: physicalRect,
             screenFrame: screen.frame,
-            physicalHeight: min(screen.safeAreaInsets.top, NSStatusBar.system.thickness)
+            physicalHeight: min(physicalRect.height, NSStatusBar.system.thickness)
         )
     }
 

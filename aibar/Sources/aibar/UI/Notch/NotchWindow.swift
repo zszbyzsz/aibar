@@ -26,6 +26,7 @@ final class NotchWindowController: NSObject, ObservableObject {
     // (screen changes), not on every content-height update.
     private var screenMidX: CGFloat = 0
     private var screenMaxY: CGFloat = 0
+    private var screenHeight: CGFloat = 0
 
     // Width stays fixed — only height follows the dashboard's actual content
     // (see `setContentHeight`, fed by `DashboardView`'s own measurement), so
@@ -138,7 +139,7 @@ final class NotchWindowController: NSObject, ObservableObject {
     }
 
     private func expandedFrameRect(forHeight height: CGFloat) -> CGRect {
-        let screenLimit = (NSScreen.main?.frame.height ?? height) - 40
+        let screenLimit = max(Self.minExpandedHeight, screenHeight - 40)
         let clamped = min(max(height, Self.minExpandedHeight), screenLimit)
         return CGRect(
             x: screenMidX - Self.expandedWidth / 2, y: screenMaxY - clamped,
@@ -203,12 +204,13 @@ final class NotchWindowController: NSObject, ObservableObject {
     /// Delegates to `NotchGeometry` (shared with `ActivityStatusBarController`)
     /// so the idle hotzone and the always-on activity capsule stay pixel-aligned.
     private func recomputeGeometry() {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = NotchGeometry.targetScreen() else { return }
         let frame = screen.frame
         idleFrame = NotchGeometry.rect(on: screen, fallbackSize: Self.idleFallbackSize)
 
         screenMidX = frame.midX
         screenMaxY = frame.maxY
+        screenHeight = frame.height
         // No content-height measurement has come in yet on the very first
         // call (the dashboard isn't even mounted until the first hover), so
         // this starts at the min height — `setContentHeight` corrects it to

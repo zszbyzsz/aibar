@@ -143,11 +143,12 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// every 10s keeps the numbers moving without them visibly jittering
     /// under a closer look.
     private static let pollIntervalExpanded: TimeInterval = 10
-    /// Every row — running or completed — is this same fixed size. Fixed
-    /// rather than measured from content, which sidesteps sizing the window
-    /// only after SwiftUI has already laid the content out once (the spring
-    /// grow-in transition needs the frame correct before it plays, not after).
-    private static let capsuleSize = CGSize(width: 190, height: 32)
+    /// Every row — running or completed — keeps a fixed height so the spring
+    /// grow-in transition has its vertical frame before SwiftUI lays content
+    /// out. Width is intentionally absent here: on a notched Mac it comes from
+    /// the physical cutout, and this size is used only when macOS reports no
+    /// notch (for example on an external monitor).
+    private static let fallbackCapsuleSize = CGSize(width: 190, height: 32)
     static let rowSpacing: CGFloat = 4
     /// However many projects are genuinely running in parallel, the
     /// expanded stack only ever shows the `maxRunningRows` most recently
@@ -714,32 +715,32 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// when fewer rows are showing doesn't sit there swallowing clicks meant
     /// for whatever's underneath.
     private func currentCapsuleFrame() -> CGRect {
-        let width = Self.capsuleSize.width
         let displayedRowCount = isExpanded ? rows.count : min(rows.count, 1)
         let height = stackHeight(forRowCount: displayedRowCount)
-        // `NSScreen.main` (the screen with the key window) can be nil for an
-        // accessory app like this one, which never makes any window key —
-        // `.screens.first` (the display with the menu bar) is the reliable
-        // fallback rather than silently landing at the screen origin.
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
-            return CGRect(origin: .zero, size: CGSize(width: width, height: height))
+        guard let screen = NotchGeometry.targetScreen() else {
+            return CGRect(origin: .zero, size: CGSize(
+                width: Self.fallbackCapsuleSize.width,
+                height: height
+            ))
         }
-        let notch = NotchGeometry.rect(on: screen, fallbackSize: Self.capsuleSize)
+        let notch = NotchGeometry.rect(on: screen, fallbackSize: Self.fallbackCapsuleSize)
+        let width = notch.width
         let x = notch.midX - width / 2
         // A hard backstop against the display itself, not a size the stack is
         // expected to reach in practice — `maxRunningRows` already keeps the
         // un-clamped height well under any real screen.
         let clampedHeight = min(height, NotchGeometry.availableHeightBelow(
             notch: notch, screenFrame: screen.frame,
-            gap: Self.gapBelowNotch, minimum: Self.capsuleSize.height
+            gap: Self.gapBelowNotch, minimum: Self.fallbackCapsuleSize.height
         ))
         let y = notch.minY - Self.gapBelowNotch - clampedHeight
         return CGRect(x: x, y: y, width: width, height: clampedHeight)
     }
 
     private func stackHeight(forRowCount rowCount: Int) -> CGFloat {
-        guard rowCount > 0 else { return Self.capsuleSize.height }
-        return CGFloat(rowCount) * Self.capsuleSize.height + CGFloat(rowCount - 1) * Self.rowSpacing
+        guard rowCount > 0 else { return Self.fallbackCapsuleSize.height }
+        return CGFloat(rowCount) * Self.fallbackCapsuleSize.height
+            + CGFloat(rowCount - 1) * Self.rowSpacing
     }
 
     /// Grows/shrinks the already-visible panel when a row is added, removed,

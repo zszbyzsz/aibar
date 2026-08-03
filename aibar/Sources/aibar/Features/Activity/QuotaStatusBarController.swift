@@ -136,7 +136,7 @@ final class QuotaStatusBarController: NSObject {
     }
 
     private func reposition() {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        guard let screen = NotchGeometry.targetScreen() else { return }
         let frames = NotchGeometry.sideFrames(
             on: screen,
             width: Self.readoutWidth,
@@ -145,7 +145,7 @@ final class QuotaStatusBarController: NSObject {
         )
         leftPanel.setFrame(frames.left, display: true)
         rightPanel.setFrame(frames.right, display: true)
-        if let bridgeFrame = NotchGeometry.cameraBridgeFrame(on: screen, fallbackSize: Self.fallbackSize) {
+        if let bridgeFrame = NotchGeometry.cameraBridgeFrame(on: screen) {
             cameraBridgePanel.setFrame(bridgeFrame, display: true)
         } else {
             cameraBridgePanel.orderOut(nil)
@@ -153,8 +153,8 @@ final class QuotaStatusBarController: NSObject {
     }
 
     private func showCameraBridgeIfAvailable() {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first,
-              let bridgeFrame = NotchGeometry.cameraBridgeFrame(on: screen, fallbackSize: Self.fallbackSize)
+        guard let screen = NotchGeometry.targetScreen(),
+              let bridgeFrame = NotchGeometry.cameraBridgeFrame(on: screen)
         else {
             cameraBridgePanel.orderOut(nil)
             return
