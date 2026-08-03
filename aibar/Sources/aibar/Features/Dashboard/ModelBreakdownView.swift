@@ -11,6 +11,10 @@ import SwiftUI
 struct ModelBreakdownView: View {
     var models: [ModelUsage]
     var rates: [String: ModelPrice]
+    /// In the dashboard's two-column attribution group, each row turns the
+    /// former long composition bar into the main token trend surface. The
+    /// composition itself remains as the thin strip immediately beneath it.
+    var isCompact = false
     @State private var hovered: String?
     @Environment(\.appLanguage) private var lang
 
@@ -53,16 +57,28 @@ struct ModelBreakdownView: View {
     private var displayed: [ModelUsage] {
         var priced: [ModelUsage] = []
         var unpricedTokens = 0
+        var unpricedDailyTokens: [Int] = []
         for item in models {
             if rates[item.model] != nil {
                 priced.append(item)
             } else {
                 unpricedTokens += item.tokens
+                if unpricedDailyTokens.count < item.dailyTokens.count {
+                    unpricedDailyTokens += Array(repeating: 0, count: item.dailyTokens.count - unpricedDailyTokens.count)
+                }
+                for index in item.dailyTokens.indices {
+                    unpricedDailyTokens[index] += item.dailyTokens[index]
+                }
             }
         }
         var result = Array(priced.prefix(unpricedTokens > 0 ? 12 : 13))
         if unpricedTokens > 0 {
-            result.append(ModelUsage(model: Self.unpricedModelKey, tokens: unpricedTokens, apiEquivalentCost: 0))
+            result.append(ModelUsage(
+                model: Self.unpricedModelKey,
+                tokens: unpricedTokens,
+                apiEquivalentCost: 0,
+                dailyTokens: unpricedDailyTokens
+            ))
         }
         return result
     }
@@ -106,7 +122,8 @@ struct ModelBreakdownView: View {
                             share: item.apiEquivalentCost / totalCost,
                             color: item.model == Self.unpricedModelKey ? Color.notchMutedInk : Self.palette[index % Self.palette.count],
                             icon: icon(for: item.model),
-                            isHovered: hovered == item.model
+                            isHovered: hovered == item.model,
+                            isCompact: isCompact
                         )
                         .onHover { isHovering in hovered = isHovering ? item.model : (hovered == item.model ? nil : hovered) }
                     }
@@ -132,52 +149,17 @@ private struct ModelRow: View {
     var color: Color
     var icon: String
     var isHovered: Bool
+    var isCompact: Bool
     @Environment(\.appLanguage) private var lang
 
     /// Fixed row height (rather than padding that follows content) so the
     /// enclosing list can size its "3 rows visible" scroll window precisely.
-    static let rowHeight: CGFloat = 54
-
-    /// The panel itself never changes width (`NotchWindow.expandedWidth` is a
-    /// fixed 720pt — only height follows content), so "80% of the row" has
-    /// exactly one value here. A static point width is simpler and steadier
-    /// than re-measuring it via GeometryReader on a container that can't
-    /// actually change size.
-    static let barWidth: CGFloat = 410
+    static let rowHeight: CGFloat = 64
 
     private var categoryTotal: Double { max(item.apiEquivalentCost, 0.000001) }
     private var inputShare: Double { item.inputCost / categoryTotal }
     private var cachedShare: Double { item.cachedCost / categoryTotal }
     private var outputShare: Double { item.outputCost / categoryTotal }
-
-    /// One continuous gradient rather than three abutting rectangles — same
-    /// three colors, rendered as a single shape so there's no pixel seam
-    /// where they meet, but with a hard (zero-width) cut at each boundary so
-    /// only the three actual input/cached/output colors ever show — no
-    /// blended fourth/fifth hue in between.
-    private var gradientStops: [Gradient.Stop] {
-        let segments = [
-            (ModelBreakdownView.inputColor, inputShare),
-            (ModelBreakdownView.cachedColor, cachedShare),
-            (ModelBreakdownView.outputColor, outputShare),
-        ].filter { $0.1 > 0.0005 }
-
-        guard !segments.isEmpty else {
-            return [.init(color: Color.notchTrack, location: 0), .init(color: Color.notchTrack, location: 1)]
-        }
-
-        let blend = 0.0
-        var stops: [Gradient.Stop] = []
-        var cursor = 0.0
-        for (index, (color, share)) in segments.enumerated() {
-            let end = index == segments.count - 1 ? 1.0 : min(cursor + share, 1.0)
-            stops.append(.init(color: color, location: index == 0 ? 0 : cursor))
-            stops.append(.init(color: color, location: min(cursor + blend, end)))
-            cursor = end
-        }
-        stops.append(.init(color: segments.last!.0, location: 1))
-        return stops
-    }
 
     /// The two largest input/cached/output shares, called out as small
     /// percentage labels next to the price on hover only — hidden at rest so
@@ -196,93 +178,141 @@ private struct ModelRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .top, spacing: 9) {
             ZStack {
-                Circle().fill(color.opacity(0.15)).frame(width: 26, height: 26)
+                Circle().fill(color.opacity(0.15)).frame(width: 24, height: 24)
                 Image(systemName: icon).font(.system(size: 11, weight: .semibold)).foregroundStyle(color)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(ModelBreakdownView.displayName(item.model, lang: lang))
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .lineLimit(1).minimumScaleFactor(0.85)
-                        .layoutPriority(1)
-                    if let price {
-                        Circle()
-                            .fill(price.status == "live" ? Color(red: 0.290, green: 0.960, blue: 0.580) : Color.notchMutedInk.opacity(0.5))
-                            .frame(width: 5, height: 5)
-                            .help(price.status == "live" ? L.liveOfficialPrice(lang) : L.cachedOfflinePrice(lang))
-                    }
-
-                    if let price {
-                        if isHovered {
-                            // Hover swaps the rate for the actual dollars billed
-                            // per category plus the top-2 share breakdown — both
-                            // stay tucked next to the price, hidden otherwise, so
-                            // the row is quiet until you ask for the detail.
-                            HStack(spacing: 8) {
-                                Text("\(Formatting.moneyLabel(item.inputCost)) · \(Formatting.moneyLabel(item.cachedCost)) · \(Formatting.moneyLabel(item.outputCost))")
-                                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.notchAccent)
-                                    .lineLimit(1)
-                                if !topShareSegments.isEmpty {
-                                    HStack(spacing: 6) {
-                                        ForEach(Array(topShareSegments.enumerated()), id: \.offset) { _, seg in
-                                            HStack(spacing: 3) {
-                                                Circle().fill(seg.color).frame(width: 4, height: 4)
-                                                Text("\(Int((seg.share * 100).rounded()))%")
-                                                    .font(.system(size: 9, weight: .semibold).monospacedDigit())
-                                                    .foregroundStyle(Color.notchMutedInk)
-                                            }
-                                        }
-                                    }
-                                }
+            // Keep price and headline metrics together in the top line. The
+            // trend and input/cache/output strip then own the entire width
+            // beneath them, including the area below the total price.
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(ModelBreakdownView.displayName(item.model, lang: lang))
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .lineLimit(1).minimumScaleFactor(0.85)
+                                .layoutPriority(1)
+                            if let price {
+                                Circle()
+                                    .fill(price.status == "live" ? Color(red: 0.290, green: 0.960, blue: 0.580) : Color.notchMutedInk.opacity(0.5))
+                                    .frame(width: 5, height: 5)
+                                    .help(price.status == "live" ? L.liveOfficialPrice(lang) : L.cachedOfflinePrice(lang))
                             }
-                        } else {
-                            Text("$\(price.input, specifier: "%.2f")/$\(price.cachedInput, specifier: "%.2f")/$\(price.output, specifier: "%.2f") \(L.per1M(lang))")
-                                .font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                                .lineLimit(1)
                         }
-                    } else {
-                        Text(L.noOfficialPriceMapped(lang))
-                            .font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
+
+                        pricingLabel
                     }
 
                     Spacer(minLength: 0)
+
+                    spendingSummary
                 }
 
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.notchTrack)
-                    if let price {
-                        LinearGradient(stops: gradientStops, startPoint: .leading, endPoint: .trailing)
-                            .clipShape(Capsule())
-                            .opacity(price.status == "live" ? 1 : 0.6)
-                    }
-                }
-                .frame(width: Self.barWidth, height: 6)
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 2) {
-                if price != nil {
-                    Text(Formatting.moneyLabel(item.apiEquivalentCost))
-                        .font(.system(size: 12.5, weight: .bold).monospacedDigit())
-                } else {
-                    Text(L.unpriced(lang))
-                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.notchMutedInk)
-                }
-                HStack(spacing: 4) {
-                    Text(Formatting.tokenLabel(item.tokens))
-                        .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(Color.notchMutedInk)
-                    Text("· \(Int((share * 100).rounded()))%")
-                        .font(.system(size: 9.5, weight: .semibold)).foregroundStyle(color)
-                }
+                trendAndComposition
             }
         }
         .frame(height: Self.rowHeight)
         .padding(.horizontal, isHovered ? 6 : 0)
         .background(RoundedRectangle(cornerRadius: 8).fill(isHovered ? color.opacity(0.07) : Color.clear))
         .animation(.easeOut(duration: 0.12), value: isHovered)
+    }
+
+    @ViewBuilder
+    private var pricingLabel: some View {
+        if let price {
+            if isHovered {
+                Text("\(Formatting.moneyLabel(item.inputCost)) · \(Formatting.moneyLabel(item.cachedCost)) · \(Formatting.moneyLabel(item.outputCost))")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundStyle(Color.notchAccent)
+                    .lineLimit(1)
+            } else {
+                Text("$\(price.input, specifier: "%.2f")/$\(price.cachedInput, specifier: "%.2f")/$\(price.output, specifier: "%.2f") \(L.per1M(lang))")
+                    .font(.system(size: 8.5))
+                    .foregroundStyle(Color.notchMutedInk)
+                    .lineLimit(1)
+            }
+        } else {
+            Text(L.noOfficialPriceMapped(lang))
+                .font(.system(size: 8.5))
+                .foregroundStyle(Color.notchMutedInk)
+        }
+    }
+
+    private var spendingSummary: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            if price != nil {
+                Text(Formatting.moneyLabel(item.apiEquivalentCost))
+                    .font(.system(size: 12.5, weight: .bold).monospacedDigit())
+            } else {
+                Text(L.unpriced(lang))
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.notchMutedInk)
+            }
+            HStack(spacing: 4) {
+                Text(Formatting.tokenLabel(item.tokens))
+                    .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(Color.notchMutedInk)
+                Text("· \(Int((share * 100).rounded()))%")
+                    .font(.system(size: 9.5, weight: .semibold)).foregroundStyle(color)
+            }
+        }
+    }
+
+    private var trendAndComposition: some View {
+        VStack(spacing: 3) {
+            MiniTokenTrendView(values: item.dailyTokens, color: color, height: isCompact ? 22 : 26)
+                .help(L.modelTokenTrendHint(lang))
+
+            DiscreteCompositionBar(
+                segments: [
+                    (ModelBreakdownView.inputColor, inputShare),
+                    (ModelBreakdownView.cachedColor, cachedShare),
+                    (ModelBreakdownView.outputColor, outputShare),
+                ],
+                isEnabled: price != nil,
+                opacity: price?.status == "live" ? 1 : 0.6
+            )
+            .frame(height: 4)
+        }
+    }
+}
+
+/// A categorical composition strip with visible gaps between token classes.
+/// Tiny non-zero categories retain a minimum width, so cached input does not
+/// disappear between larger input/output blocks. No gradient is used.
+private struct DiscreteCompositionBar: View {
+    let segments: [(color: Color, share: Double)]
+    let isEnabled: Bool
+    let opacity: Double
+
+    var body: some View {
+        GeometryReader { geo in
+            let active = segments.filter { $0.share > 0.0005 }
+            let spacing: CGFloat = 2
+            let gapWidth = spacing * CGFloat(max(0, active.count - 1))
+            let available = max(0, geo.size.width - gapWidth)
+            let minimumWidth = min(4, available / CGFloat(max(active.count, 1)))
+            let flexibleWidth = max(0, available - minimumWidth * CGFloat(active.count))
+            let totalShare = max(active.reduce(0) { $0 + $1.share }, 0.000001)
+
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.notchTrack)
+                if isEnabled, !active.isEmpty {
+                    HStack(spacing: spacing) {
+                        ForEach(active.indices, id: \.self) { index in
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(active[index].color)
+                                .frame(
+                                    width: minimumWidth
+                                        + flexibleWidth * CGFloat(active[index].share / totalShare)
+                                )
+                        }
+                    }
+                    .opacity(opacity)
+                    .clipShape(Capsule())
+                }
+            }
+        }
     }
 }

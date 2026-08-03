@@ -12,8 +12,11 @@ struct ProjectListView: View {
 
     /// Fixed row height (see ModelRow.rowHeight) so exactly 3 rows show
     /// before the list scrolls, matching the model card's behavior.
-    static let rowHeight: CGFloat = 48
-    private static let rowSpacing: CGFloat = 10
+    static let rowHeight: CGFloat = 64
+    /// Match the compact model card's legend + three-row viewport so both
+    /// attribution cards retain one continuous lower edge even when there are
+    /// fewer than three projects to show.
+    static let compactCardContentHeight: CGFloat = 218
 
     /// Same validated 8-hue order as the model list (first 4 slots), so a
     /// project and a model never accidentally share a color language while
@@ -26,25 +29,26 @@ struct ProjectListView: View {
     ]
 
     var body: some View {
-        // Token counts across projects can span several orders of magnitude;
-        // a plain linear bar makes every project but the largest invisible,
-        // so this compresses the scale with sqrt while keeping the ordering.
-        let maxScale = max(sqrt(Double(projects.map(\.tokens).max() ?? 0)), 1)
         if projects.isEmpty {
-            Text(L.noProjectData(lang)).font(.system(size: 11)).foregroundStyle(Color.notchMutedInk)
+            Text(L.noProjectData(lang))
+                .font(.system(size: 11))
+                .foregroundStyle(Color.notchMutedInk)
+                .frame(maxWidth: .infinity, minHeight: Self.compactCardContentHeight, alignment: .center)
         } else {
             // Fixed-height rows so exactly 3 show before scrolling kicks in,
             // with the remaining projects (up to the 12-project cap set
             // upstream) reachable by scrolling instead of growing the card.
             ScrollView(.vertical) {
-                VStack(spacing: Self.rowSpacing) {
+                VStack(spacing: 0) {
                     ForEach(Array(projects.enumerated()), id: \.element.id) { index, project in
+                        if index > 0 {
+                            Rectangle().fill(Color.notchRule).frame(height: 1)
+                        }
                         let color = Self.palette[index % Self.palette.count]
                         ProjectRow(
                             project: project,
                             rank: index + 1,
                             rankColor: color,
-                            totalScale: maxScale,
                             isExpanded: expandedProject == project.id,
                             toggleExpansion: {
                                 withAnimation(.easeInOut(duration: 0.16)) {
@@ -56,7 +60,8 @@ struct ProjectListView: View {
                 }
             }
             .scrollIndicators(.visible)
-            .frame(height: Self.rowHeight * 3 + Self.rowSpacing * 2)
+            .frame(height: Self.rowHeight * 3 + 2)
+            .frame(maxWidth: .infinity, minHeight: Self.compactCardContentHeight, alignment: .topLeading)
         }
     }
 }
@@ -65,7 +70,6 @@ private struct ProjectRow: View {
     var project: ProjectUsage
     var rank: Int
     var rankColor: Color
-    var totalScale: Double
     var isExpanded: Bool
     var toggleExpansion: () -> Void
     @Environment(\.appLanguage) private var lang
@@ -89,34 +93,51 @@ private struct ProjectRow: View {
             : project.name
     }
 
+    private var modelSummary: String {
+        let names = project.models.prefix(2).map(\.model)
+        return names.isEmpty ? L.noOfficialPriceMapped(lang) : names.joined(separator: " · ")
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             Button(action: toggleExpansion) {
-                HStack(spacing: 10) {
+                HStack(alignment: .top, spacing: 9) {
                     ZStack {
-                        Circle().fill(rankColor.opacity(0.15)).frame(width: 22, height: 22)
+                        Circle().fill(rankColor.opacity(0.15)).frame(width: 24, height: 24)
                         Text("\(rank)")
                             .font(.system(size: 10, weight: .bold)).foregroundStyle(rankColor)
                     }
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 6) {
-                            Text(projectName).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-                            Spacer(minLength: 4)
-                            VStack(alignment: .trailing, spacing: 1) {
-                                Text(Formatting.moneyLabel(project.apiEquivalentCost))
-                                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                                Text("\(Formatting.tokenLabel(project.tokens)) token")
-                                    .font(.system(size: 8.5).monospacedDigit())
+
+                    // Just like the model list, the row's trend and usage
+                    // strip span the full content width underneath both the
+                    // project label and its total price.
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 5) {
+                                    Text(projectName).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                                    if !project.models.isEmpty {
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 7, weight: .bold))
+                                            .foregroundStyle(Color.notchMutedInk)
+                                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                Text(modelSummary)
+                                    .font(.system(size: 8.5))
                                     .foregroundStyle(Color.notchMutedInk)
+                                    .lineLimit(1)
                             }
-                            if !project.models.isEmpty {
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundStyle(Color.notchMutedInk)
-                                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                            }
+
+                            Spacer(minLength: 0)
+
+                            spendingSummary
                         }
-                        tokenBar
+
+                        MiniTokenTrendView(values: project.dailyTokens, color: rankColor, height: 22)
+                            .help(L.projectTokenTrendHint(lang))
+                        compositionBar
                     }
                 }
             }
@@ -152,27 +173,36 @@ private struct ProjectRow: View {
         .frame(minHeight: ProjectListView.rowHeight)
     }
 
-    private var tokenBar: some View {
+    private var spendingSummary: some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(Formatting.moneyLabel(project.apiEquivalentCost))
+                .font(.system(size: 11.5, weight: .bold).monospacedDigit())
+            Text("\(Formatting.tokenLabel(project.tokens)) token")
+                .font(.system(size: 9).monospacedDigit())
+                .foregroundStyle(Color.notchMutedInk)
+        }
+    }
+
+    private var compositionBar: some View {
         GeometryReader { geo in
-            let barWidth = geo.size.width * CGFloat(sqrt(Double(project.tokens)) / totalScale)
             Capsule().fill(Color.notchTrack)
                 .overlay(alignment: .leading) {
                     HStack(spacing: 0) {
                         if project.models.isEmpty {
                             Capsule().fill(rankColor)
-                                .frame(width: max(4, barWidth))
+                                .frame(width: geo.size.width)
                         } else {
                             ForEach(Array(project.models.enumerated()), id: \.element.id) { index, model in
                                 Rectangle()
                                     .fill(modelColor(at: index))
-                                    .frame(width: barWidth * CGFloat(model.tokens) / CGFloat(max(project.tokens, 1)))
+                                    .frame(width: geo.size.width * CGFloat(model.tokens) / CGFloat(max(project.tokens, 1)))
                             }
                         }
                     }
-                    .frame(width: max(4, barWidth), alignment: .leading)
+                    .frame(width: geo.size.width, alignment: .leading)
                     .clipShape(Capsule())
                 }
         }
-        .frame(height: 5)
+        .frame(height: 3)
     }
 }

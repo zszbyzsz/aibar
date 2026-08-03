@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// A single number in the merged overview strip — no card chrome of its own,
-/// separated from its neighbors by a hairline so four numbers read as one row
-/// instead of four boxes.
+/// A single number in the merged overview strip. Each stat keeps its icon and
+/// label on one quiet line, then gives the value a full line of width. This is
+/// especially important for the longer English API-cost labels at 720pt.
 ///
 /// `trend`, when present, compares the last 7 days against the 7 days before
 /// that (both already inside the 30-day window, so no extra history needs to
@@ -25,31 +25,54 @@ struct CompactStat: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            ZStack {
-                Circle().fill(Color.notchAccent.opacity(0.12)).frame(width: 22, height: 22)
-                Image(systemName: icon).font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.notchAccent)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.notchAccent)
+                    .frame(width: 19, height: 19)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.notchAccent.opacity(0.12))
+                    )
+                Text(label)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(Color.notchMutedInk)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .help(label)
             }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label).font(.system(size: 9.5)).foregroundStyle(Color.notchMutedInk)
-                Text(value).font(.system(size: 14, weight: .bold))
+
+            Text(value)
+                .font(.system(size: 15, weight: .bold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+
+            Group {
                 if let trend {
-                    HStack(spacing: 2) {
+                    HStack(spacing: 3) {
                         Image(systemName: trend.up ? "arrow.up" : "arrow.down")
                             .font(.system(size: 7, weight: .bold))
                         Text(L.trendVsPrior7d(lang, abs(trend.percent)))
                             .font(.system(size: 8.5))
+                            .lineLimit(1)
                     }
                     .foregroundStyle(trendColor)
+                } else {
+                    Color.clear
                 }
             }
+            .frame(height: 10, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .combine)
     }
 }
 
 struct VSep: View {
+    var height: CGFloat = 42
+
     var body: some View {
-        Rectangle().fill(Color.notchRule).frame(width: 1, height: 24)
+        Rectangle().fill(Color.notchRule).frame(width: 1, height: height)
     }
 }
