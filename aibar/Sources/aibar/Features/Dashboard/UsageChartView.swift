@@ -5,11 +5,10 @@ private func shortDate(_ isoDate: String) -> String {
     String(isoDate.suffix(5))
 }
 
-/// Presentation policy for manually redeemable reset credits: distant credits
-/// stay quiet alarm markers on their calendar day, while credits expiring
-/// within ten days turn red and carry their remaining-day count. The date
-/// itself is never spelled out — the marker's position in the heatmap is the
-/// date.
+/// Presentation policy for every manually redeemable reset credit. Credits
+/// farther than ten days out use the quiet orange alarm; each credit entering
+/// the ten-day window becomes a red day-count badge. These markers remain
+/// independent from the subscription-end and weekly-refresh outlines.
 enum ResetExpiryUrgency {
     static let detailedWindow: TimeInterval = 10 * 86_400
 
@@ -158,21 +157,26 @@ private struct UsageMilestoneDecoration: View {
     }
 }
 
-/// A fixed-size 90-day window whose right edge advances to the furthest known
-/// Full reset expiry. With no reset it ends today; with an expiry 13 days out,
-/// for example, it naturally shows 76 historical days, today, and 13 future
-/// days. This keeps the grid stable while making expiry dates real positions
-/// on the same calendar rather than detached labels.
+/// A fixed-size 154-day (22-week) window whose right edge advances to the end
+/// of the furthest marker's calendar week. Starting on Monday and ending on
+/// Sunday means every displayed position is a real day — no transparent
+/// alignment cells at either edge. Every reset credit keeps its own date; the
+/// subscription end and next weekly reset remain singular account boundaries.
 struct UsageTimeline {
-    static let dayCount = 90
+    static let weekCount = 22
+    static let dayCount = weekCount * 7
 
     let points: [DailyPoint]
     let resetExpiriesByDate: [String: [Double]]
     let todayKey: String
+    let subscriptionEndKey: String?
+    let weeklyResetKey: String?
 
     init(
         daily: [DailyPoint],
         resetCredits: RateLimitResetCredits?,
+        weeklyResetAt: Double?,
+        subscriptionEndsAt: Date?,
         now: Date = Date(),
         calendar requestedCalendar: Calendar = .current
     ) {
@@ -189,11 +193,24 @@ struct UsageTimeline {
 
         let today = calendar.startOfDay(for: now)
         todayKey = key(for: today)
-        let expiries = resetCredits?.expiresAt ?? []
-        let furthestExpiryDay = expiries
-            .map { calendar.startOfDay(for: Date(timeIntervalSince1970: $0)) }
-            .max()
-        let end = max(today, furthestExpiryDay ?? today)
+        let weeklyResetDay = weeklyResetAt.map {
+            calendar.startOfDay(for: Date(timeIntervalSince1970: $0))
+        }
+        let subscriptionEndDay = subscriptionEndsAt.map(calendar.startOfDay(for:))
+        let resetExpiries = resetCredits?.expiresAt ?? []
+        let resetExpiryDays = resetExpiries.map {
+            calendar.startOfDay(for: Date(timeIntervalSince1970: $0))
+        }
+        weeklyResetKey = weeklyResetDay.map(key(for:))
+        subscriptionEndKey = subscriptionEndDay.map(key(for:))
+        let boundaryEnd = ([today, weeklyResetDay, subscriptionEndDay] + resetExpiryDays)
+            .compactMap { $0 }
+            .max() ?? today
+        // Calendar weekday uses 1 = Sunday ... 7 = Saturday. Advancing the
+        // boundary to Sunday keeps the visible matrix at an exact whole-week
+        // width while still guaranteeing every account marker is included.
+        let daysUntilSunday = (8 - calendar.component(.weekday, from: boundaryEnd)) % 7
+        let end = calendar.date(byAdding: .day, value: daysUntilSunday, to: boundaryEnd) ?? boundaryEnd
         let start = calendar.date(byAdding: .day, value: -(Self.dayCount - 1), to: end) ?? end
         let existing = Dictionary(uniqueKeysWithValues: daily.map { ($0.date, $0) })
 
@@ -204,10 +221,11 @@ struct UsageTimeline {
         }
 
         var grouped: [String: [Double]] = [:]
-        for expiry in expiries {
+        for expiry in resetExpiries {
             grouped[key(for: Date(timeIntervalSince1970: expiry)), default: []].append(expiry)
         }
         resetExpiriesByDate = grouped.mapValues { $0.sorted() }
+
     }
 }
 
@@ -216,7 +234,7 @@ struct UsageTimeline {
 /// drops position-as-magnitude and encodes intensity as color only, arranged
 /// as full Mon–Sun weeks (oldest week on the left, columns running left to
 /// right) so a week's rhythm reads as a shape at a glance instead of a
-/// sequence of bar heights. Fixed at 7 rows across a dynamic 90-day window —
+/// sequence of bar heights. Fixed at 7 rows across a dynamic 154-day window —
 /// width grows with more history instead of height, which is what
 /// actually fills the card's row next to the session/weekly rings beside it
 /// rather than just making the card taller. Hovering a cell (still inside the
@@ -227,8 +245,12 @@ struct UsageChartView: View {
     @State private var hovered: DailyPoint?
     @Environment(\.appLanguage) private var lang
 
-    private static let cellSize: CGFloat = 18
-    private static let cellSpacing: CGFloat = 2
+    private static let cellSize: CGFloat = 17
+    private static let rowSpacing: CGFloat = 1.5
+    private static let minimumWeekSpacing: CGFloat = 2
+    private static let weekdayLabelWidth: CGFloat = 10
+    private static let weekdayGridSpacing: CGFloat = 6
+    private static let gridHeight = cellSize * 7 + rowSpacing * 6
     private static let heatmapPalette: [HeatmapRGB] = [
         HeatmapRGB(red: 0.075, green: 0.145, blue: 0.255),
         HeatmapRGB(red: 0.035, green: 0.215, blue: 0.495),
@@ -236,6 +258,8 @@ struct UsageChartView: View {
         HeatmapRGB(red: 0.030, green: 0.510, blue: 1.000),
         HeatmapRGB(red: 0.040, green: 0.690, blue: 0.980),
     ]
+    private static let endColor = Color(red: 1.000, green: 0.280, blue: 0.340)
+    private static let weeklyResetColor = Color(red: 1.000, green: 0.720, blue: 0.160)
     private static let resetUrgentColor = Color(red: 1.000, green: 0.280, blue: 0.340)
     private static let resetScheduledColor = Color(red: 1.000, green: 0.620, blue: 0.160)
 
@@ -264,6 +288,21 @@ struct UsageChartView: View {
         cells.append(contentsOf: daily.map { Optional($0) })
         while cells.count % 7 != 0 { cells.append(nil) }
         return stride(from: 0, to: cells.count, by: 7).map { Array(cells[$0..<$0 + 7]) }
+    }
+
+    /// Distribute only the horizontal inter-week space. Keeping cell height
+    /// fixed makes the card more compact while still carrying the final week
+    /// exactly to the legend's trailing edge at every dashboard width.
+    private func weekSpacing(for totalWidth: CGFloat) -> CGFloat {
+        let gridWidth = max(
+            0,
+            totalWidth - Self.weekdayLabelWidth - Self.weekdayGridSpacing
+        )
+        let gapCount = max(1, weeks.count - 1)
+        let fitted = (
+            gridWidth - CGFloat(weeks.count) * Self.cellSize
+        ) / CGFloat(gapCount)
+        return max(Self.minimumWeekSpacing, fitted)
     }
 
     private static func heatmapRGB(at position: Double) -> HeatmapRGB {
@@ -305,6 +344,50 @@ struct UsageChartView: View {
         return timeline.resetExpiriesByDate[point.date] ?? []
     }
 
+    private enum LegendMarker {
+        case scheduledReset
+        case urgentReset
+        case today
+        case subscriptionEnd
+        case weeklyReset
+    }
+
+    private struct LegendSwatch: View {
+        var marker: LegendMarker
+
+        @ViewBuilder
+        var body: some View {
+            switch marker {
+            case .scheduledReset:
+                Circle()
+                    .fill(UsageChartView.resetScheduledColor)
+                    .overlay(
+                        Image(systemName: "alarm.fill")
+                            .font(.system(size: 5.5, weight: .heavy))
+                            .foregroundStyle(Color.white)
+                    )
+            case .urgentReset:
+                RoundedRectangle(cornerRadius: 3.5)
+                    .fill(UsageChartView.resetUrgentColor)
+                    .overlay(
+                        Text("3d")
+                            .font(.system(size: 5.5, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.white)
+                    )
+            case .today:
+                RoundedRectangle(cornerRadius: 3.5)
+                    .strokeBorder(Color.notchInk, lineWidth: 1.5)
+            case .subscriptionEnd:
+                RoundedRectangle(cornerRadius: 3.5)
+                    .strokeBorder(UsageChartView.endColor, lineWidth: 2)
+                    .shadow(color: UsageChartView.endColor.opacity(0.35), radius: 1)
+            case .weeklyReset:
+                RoundedRectangle(cornerRadius: 3.5)
+                    .strokeBorder(UsageChartView.weeklyResetColor, lineWidth: 2)
+            }
+        }
+    }
+
     @ViewBuilder
     private func milestoneLegend(_ milestone: UsageMilestone, label: String) -> some View {
         HStack(spacing: 4) {
@@ -318,9 +401,87 @@ struct UsageChartView: View {
         }
     }
 
-    /// Days left until an imminent expiry. Deliberately unlocalized: at this
-    /// size a CJK glyph is unreadable, and the dashboard already uses the bare
-    /// `d` suffix in both languages (`30d 窗口`).
+    private func markerLegend(_ marker: LegendMarker, label: String) -> some View {
+        HStack(spacing: 4) {
+            LegendSwatch(marker: marker)
+                .frame(width: 12, height: 12)
+            Text(label)
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundStyle(Color.notchMutedInk)
+                .lineLimit(1)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var compactLegend: some View {
+        HStack(alignment: .center, spacing: 9) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 4) {
+                    Text(L.less(lang))
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundStyle(Color.notchMutedInk)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(
+                            LinearGradient(
+                                colors: UsageHeatmapScale.legendPositions.map {
+                                    Self.heatmapRGB(at: $0).color
+                                },
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: 62, height: 10)
+                    Text(L.more(lang))
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundStyle(Color.notchMutedInk)
+                }
+
+                HStack(spacing: 9) {
+                    ForEach(UsageMilestone.visibleLegendTiers, id: \.self) { milestone in
+                        milestoneLegend(milestone, label: milestone == .billion ? "1B+" : "5B+")
+                    }
+                }
+            }
+
+            Rectangle()
+                .fill(Color.notchRule)
+                .frame(width: 1, height: 30)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 9) {
+                    markerLegend(.scheduledReset, label: L.resetExpiryLegend(lang))
+                    markerLegend(.urgentReset, label: L.resetExpiryUrgentLegend(lang))
+                }
+                HStack(spacing: 9) {
+                    markerLegend(.today, label: L.today(lang))
+                    markerLegend(.subscriptionEnd, label: L.subscriptionEndLegend(lang))
+                    markerLegend(.weeklyReset, label: L.weeklyRefreshLegend(lang))
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.white.opacity(0.025))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.white.opacity(0.055), lineWidth: 1)
+        )
+    }
+
+    private func markerLabels(for point: DailyPoint) -> [String] {
+        var labels: [String] = []
+        if point.date == timeline.subscriptionEndKey { labels.append(L.subscriptionEndLegend(lang)) }
+        if point.date == timeline.weeklyResetKey { labels.append(L.weeklyRefreshLegend(lang)) }
+        return labels
+    }
+
+    /// Days left until an imminent reset credit expires. The compact `d`
+    /// suffix stays legible inside a 17pt heatmap cell in both languages.
     private static func daysLeftBadge(_ expiry: Double) -> String {
         "\(ResetExpiryUrgency.daysRemaining(expiry))d"
     }
@@ -341,16 +502,44 @@ struct UsageChartView: View {
                 .accessibilityLabel(
                     L.resetExpiryWithinDays(lang, days: ResetExpiryUrgency.daysRemaining(imminent))
                 )
+                .padding(1)
+                .shadow(color: Self.resetUrgentColor.opacity(0.4), radius: 1.5)
         } else {
             Circle()
                 .fill(Self.resetScheduledColor)
-                .frame(width: Self.cellSize - 2, height: Self.cellSize - 2)
+                .frame(width: Self.cellSize - 4, height: Self.cellSize - 4)
                 .overlay(
                     Image(systemName: "alarm.fill")
-                        .font(.system(size: 8, weight: .heavy))
+                        .font(.system(size: 7, weight: .heavy))
                         .foregroundStyle(Color.white)
                 )
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.75)
+                )
+                .shadow(color: Self.resetScheduledColor.opacity(0.32), radius: 1)
                 .accessibilityLabel(L.resetExpiryLegend(lang))
+        }
+    }
+
+    @ViewBuilder
+    private func markerBorders(for point: DailyPoint?) -> some View {
+        if let point {
+            let isEnd = point.date == timeline.subscriptionEndKey
+            let isWeeklyReset = point.date == timeline.weeklyResetKey
+            if isEnd {
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(Self.endColor, lineWidth: 2.5)
+                    .shadow(color: Self.endColor.opacity(0.55), radius: 2)
+                    .accessibilityLabel(L.subscriptionEndLegend(lang))
+            }
+            if isWeeklyReset {
+                RoundedRectangle(cornerRadius: isEnd ? 2.5 : 4)
+                    .strokeBorder(Self.weeklyResetColor, lineWidth: isEnd ? 1.5 : 2.5)
+                    .padding(isEnd ? 3 : 0)
+                    .shadow(color: Self.weeklyResetColor.opacity(0.45), radius: isEnd ? 0 : 1.5)
+                    .accessibilityLabel(L.weeklyRefreshLegend(lang))
+            }
         }
     }
 
@@ -358,23 +547,31 @@ struct UsageChartView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 if let hovered {
+                    let markers = markerLabels(for: hovered)
                     let expiries = resetExpiries(for: hovered)
-                    let isUrgent = expiries.contains { ResetExpiryUrgency.isDetailed($0) }
+                    let hasUrgentReset = expiries.contains { ResetExpiryUrgency.isDetailed($0) }
                     Text(
-                        expiries.isEmpty
-                            ? L.heatmapHover(lang, date: shortDate(hovered.date), cost: Formatting.moneyLabel(hovered.cost), tokens: Formatting.tokenLabel(hovered.tokens))
-                            : L.heatmapResetHover(
+                        !expiries.isEmpty
+                            ? L.heatmapResetHover(
                                 lang,
                                 date: shortDate(hovered.date),
                                 count: expiries.count,
-                                times: expiries.map { Formatting.compactTimeLabel($0) }.joined(separator: ", ")
+                                times: expiries.map { Formatting.compactTimeLabel($0) }.joined(separator: ", "),
+                                additionalMarkers: markers
+                            )
+                            : markers.isEmpty
+                            ? L.heatmapHover(lang, date: shortDate(hovered.date), cost: Formatting.moneyLabel(hovered.cost), tokens: Formatting.tokenLabel(hovered.tokens))
+                            : L.heatmapMarkerHover(
+                                lang,
+                                date: shortDate(hovered.date),
+                                markers: markers.joined(separator: " · ")
                             )
                     )
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(
-                            expiries.isEmpty
-                                ? Color.notchAccent
-                                : (isUrgent ? Self.resetUrgentColor : Self.resetScheduledColor)
+                            !expiries.isEmpty
+                                ? (hasUrgentReset ? Self.resetUrgentColor : Self.resetScheduledColor)
+                                : (markers.isEmpty ? Color.notchAccent : Color.notchInk)
                         )
                 } else {
                     Text(L.heatmapTimelineHint(lang, days: daily.count))
@@ -388,105 +585,65 @@ struct UsageChartView: View {
             // Weekday labels as a leading column (rows, not a header row) now
             // that weeks run left to right — each label lines up with its own
             // row across every week-column below it.
-            HStack(alignment: .top, spacing: 6) {
-                VStack(spacing: Self.cellSpacing) {
-                    ForEach(Array(L.weekdayLabels(lang).enumerated()), id: \.offset) { _, label in
-                        Text(label)
-                            .font(.system(size: 8))
-                            .foregroundStyle(Color.notchMutedInk)
-                            .frame(width: 10, height: Self.cellSize, alignment: .trailing)
+            GeometryReader { proxy in
+                HStack(alignment: .top, spacing: Self.weekdayGridSpacing) {
+                    VStack(spacing: Self.rowSpacing) {
+                        ForEach(Array(L.weekdayLabels(lang).enumerated()), id: \.offset) { _, label in
+                            Text(label)
+                                .font(.system(size: 8))
+                                .foregroundStyle(Color.notchMutedInk)
+                                .frame(
+                                    width: Self.weekdayLabelWidth,
+                                    height: Self.cellSize,
+                                    alignment: .trailing
+                                )
+                        }
                     }
-                }
 
-                HStack(spacing: Self.cellSpacing) {
-                    ForEach(weeks.indices, id: \.self) { col in
-                        VStack(spacing: Self.cellSpacing) {
-                            ForEach(0..<7, id: \.self) { row in
-                                let point = weeks[col][row]
-                                let expiries = resetExpiries(for: point)
-                                let isToday = point?.date == timeline.todayKey
-                                let milestone = UsageMilestone.level(for: point?.tokens ?? 0)
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(cellFill(point))
-                                    if !expiries.isEmpty {
-                                        resetMarker(for: expiries)
-                                    } else if milestone != .none {
-                                        UsageMilestoneDecoration(milestone: milestone)
-                                    }
-                                }
-                                    .frame(width: Self.cellSize, height: Self.cellSize)
-                                    .overlay(
+                    HStack(spacing: weekSpacing(for: proxy.size.width)) {
+                        ForEach(weeks.indices, id: \.self) { col in
+                            VStack(spacing: Self.rowSpacing) {
+                                ForEach(0..<7, id: \.self) { row in
+                                    let point = weeks[col][row]
+                                    let expiries = resetExpiries(for: point)
+                                    let isToday = point?.date == timeline.todayKey
+                                    let milestone = UsageMilestone.level(for: point?.tokens ?? 0)
+                                    ZStack {
                                         RoundedRectangle(cornerRadius: 4)
-                                            .strokeBorder(
-                                                isToday
-                                                    ? Color.notchInk
-                                                    : (point != nil && point?.id == hovered?.id ? Color.notchAccent : Color.clear),
-                                                lineWidth: isToday ? 2 : 1.5
-                                            )
-                                    )
-                                    .onHover { isHovering in
-                                        guard let point else { return }
-                                        hovered = isHovering ? point : (hovered?.id == point.id ? nil : hovered)
+                                            .fill(cellFill(point))
+                                        if !expiries.isEmpty {
+                                            resetMarker(for: expiries)
+                                        } else if milestone != .none {
+                                            UsageMilestoneDecoration(milestone: milestone)
+                                        }
                                     }
+                                        .frame(width: Self.cellSize, height: Self.cellSize)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .strokeBorder(
+                                                    isToday
+                                                        ? Color.notchInk
+                                                        : (point != nil && point?.id == hovered?.id ? Color.notchAccent : Color.clear),
+                                                    lineWidth: isToday ? 2 : 1.5
+                                                )
+                                        )
+                                        .overlay(markerBorders(for: point))
+                                        .onHover { isHovering in
+                                            guard let point else { return }
+                                            hovered = isHovering ? point : (hovered?.id == point.id ? nil : hovered)
+                                        }
+                                }
                             }
                         }
                     }
                 }
-
-                Spacer(minLength: 0)
             }
+            .frame(height: Self.gridHeight)
 
-            // Two short rows keep each symbol close to its meaning without
-            // compressing every state into one long sentence. The 10B reward
-            // remains deliberately undocumented as an easter egg.
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 5) {
-                    Text(L.less(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(
-                            LinearGradient(
-                                colors: UsageHeatmapScale.legendPositions.map {
-                                    Self.heatmapRGB(at: $0).color
-                                },
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: 68, height: 12)
-                    Text(L.more(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                    ForEach(UsageMilestone.visibleLegendTiers, id: \.self) { milestone in
-                        milestoneLegend(milestone, label: milestone == .billion ? "1B+" : "5B+")
-                    }
-                    Spacer(minLength: 0)
-                }
-
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(Self.resetScheduledColor)
-                        .frame(width: 12, height: 12)
-                        .overlay(
-                            Image(systemName: "alarm.fill")
-                                .font(.system(size: 6, weight: .heavy))
-                                .foregroundStyle(Color.white)
-                        )
-                    Text(L.resetExpiryLegend(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Self.resetUrgentColor)
-                        .frame(width: 12, height: 12)
-                        .overlay(
-                            Text("3d")
-                                .font(.system(size: 5.5, weight: .heavy, design: .rounded))
-                                .foregroundStyle(Color.white)
-                        )
-                    Text(L.resetExpiryUrgentLegend(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                    RoundedRectangle(cornerRadius: 3)
-                        .strokeBorder(Color.notchInk, lineWidth: 1.5)
-                        .frame(width: 12, height: 12)
-                    Text(L.today(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-                    Spacer(minLength: 0)
-                }
-            }
+            // One quiet legend surface turns the scale, rewards, and account
+            // boundaries into a single visual system. The 10B reward remains
+            // deliberately undocumented as an easter egg.
+            compactLegend
         }
     }
 }

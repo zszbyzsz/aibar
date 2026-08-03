@@ -41,7 +41,14 @@ final class UsageTimelineTests: XCTestCase {
         XCTAssertFalse(UsageMilestone.visibleLegendTiers.contains(.tenBillion))
     }
 
-    func testCompactResetLegendCopyRetainsTheTenDayBoundary() {
+    func testTimelineMarkerLegendUsesEndAndWeeklyRefreshLabels() {
+        XCTAssertEqual(L.subscriptionEndLegend(.zh), "结束")
+        XCTAssertEqual(L.weeklyRefreshLegend(.zh), "周刷新")
+        XCTAssertEqual(L.subscriptionEndLegend(.en), "End")
+        XCTAssertEqual(L.weeklyRefreshLegend(.en), "Weekly reset")
+    }
+
+    func testResetLegendAndTenDayCountdownRemainUnchanged() {
         XCTAssertEqual(L.resetExpiryLegend(.zh), "重置 >10天")
         XCTAssertEqual(L.resetExpiryUrgentLegend(.zh), "重置 ≤10天")
         XCTAssertEqual(L.resetExpiryLegend(.en), "Reset >10d")
@@ -62,40 +69,62 @@ final class UsageTimelineTests: XCTestCase {
         ).date!
     }
 
-    func testTimelineEndsAtFurthestResetExpiryAndLooksBackNinetyDays() {
-        let expiry = date(2026, 8, 13, hour: 1).timeIntervalSince1970
+    func testTimelineUsesTwentyTwoCompleteWeeksAroundFurthestAccountBoundary() {
+        let weeklyReset = date(2026, 8, 4, hour: 1).timeIntervalSince1970
+        let subscriptionEnd = date(2026, 8, 13, hour: 18)
         let timeline = UsageTimeline(
             daily: [],
-            resetCredits: RateLimitResetCredits(availableCount: 1, expiresAt: [expiry]),
+            resetCredits: RateLimitResetCredits(
+                availableCount: 2,
+                expiresAt: [date(2026, 8, 8).timeIntervalSince1970, date(2026, 8, 16).timeIntervalSince1970]
+            ),
+            weeklyResetAt: weeklyReset,
+            subscriptionEndsAt: subscriptionEnd,
             now: date(2026, 7, 31),
             calendar: utcCalendar
         )
 
-        XCTAssertEqual(timeline.points.count, 90)
-        XCTAssertEqual(timeline.points.first?.date, "2026-05-16")
-        XCTAssertEqual(timeline.points.last?.date, "2026-08-13")
+        XCTAssertEqual(timeline.points.count, 154)
+        XCTAssertEqual(timeline.points.first?.date, "2026-03-16")
+        XCTAssertEqual(timeline.points.last?.date, "2026-08-16")
         XCTAssertEqual(timeline.todayKey, "2026-07-31")
-        XCTAssertEqual(timeline.resetExpiriesByDate["2026-08-13"], [expiry])
+        XCTAssertEqual(timeline.weeklyResetKey, "2026-08-04")
+        XCTAssertEqual(timeline.subscriptionEndKey, "2026-08-13")
+        XCTAssertEqual(timeline.resetExpiriesByDate.count, 2)
     }
 
-    func testTimelineEndsTodayWhenThereIsNoDatedReset() {
+    func testTimelineEndsTodayWhenThereAreNoAccountBoundaries() {
         let timeline = UsageTimeline(
             daily: [],
-            resetCredits: RateLimitResetCredits(availableCount: 2, expiresAt: []),
+            resetCredits: nil,
+            weeklyResetAt: nil,
+            subscriptionEndsAt: nil,
             now: date(2026, 7, 31),
             calendar: utcCalendar
         )
 
-        XCTAssertEqual(timeline.points.count, 90)
-        XCTAssertEqual(timeline.points.last?.date, "2026-07-31")
+        XCTAssertEqual(timeline.points.count, 154)
+        XCTAssertEqual(timeline.points.first?.date, "2026-03-02")
+        XCTAssertEqual(timeline.points.last?.date, "2026-08-02")
+        XCTAssertNil(timeline.weeklyResetKey)
+        XCTAssertNil(timeline.subscriptionEndKey)
+        XCTAssertTrue(timeline.resetExpiriesByDate.isEmpty)
     }
 
-    func testTimelinePreservesUsageAndGroupsResetsOnTheSameDay() {
-        let first = date(2026, 8, 13, hour: 1).timeIntervalSince1970
-        let second = date(2026, 8, 13, hour: 18).timeIntervalSince1970
+    func testTimelinePreservesUsageAndKeepsOneMarkerOfEachKind() {
+        let boundary = date(2026, 8, 13, hour: 18)
         let timeline = UsageTimeline(
             daily: [DailyPoint(date: "2026-07-31", tokens: 42_000, cost: 1.25)],
-            resetCredits: RateLimitResetCredits(availableCount: 2, expiresAt: [second, first]),
+            resetCredits: RateLimitResetCredits(
+                availableCount: 3,
+                expiresAt: [
+                    date(2026, 8, 6, hour: 1).timeIntervalSince1970,
+                    date(2026, 8, 13, hour: 1).timeIntervalSince1970,
+                    date(2026, 8, 13, hour: 18).timeIntervalSince1970,
+                ]
+            ),
+            weeklyResetAt: boundary.timeIntervalSince1970,
+            subscriptionEndsAt: boundary,
             now: date(2026, 7, 31),
             calendar: utcCalendar
         )
@@ -103,7 +132,10 @@ final class UsageTimelineTests: XCTestCase {
         let today = timeline.points.first { $0.date == "2026-07-31" }
         XCTAssertEqual(today?.tokens, 42_000)
         XCTAssertEqual(today?.cost, 1.25)
-        XCTAssertEqual(timeline.resetExpiriesByDate["2026-08-13"], [first, second])
+        XCTAssertEqual(timeline.weeklyResetKey, "2026-08-13")
+        XCTAssertEqual(timeline.subscriptionEndKey, "2026-08-13")
+        XCTAssertEqual(timeline.resetExpiriesByDate["2026-08-06"]?.count, 1)
+        XCTAssertEqual(timeline.resetExpiriesByDate["2026-08-13"]?.count, 2)
     }
 
     func testResetExpiryUrgencyUsesAnExactTenDayWindow() {

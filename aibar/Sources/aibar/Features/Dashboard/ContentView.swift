@@ -30,16 +30,13 @@ struct DashboardView: View {
     private var lang: AppLanguage { store.language }
     private var weeklyLabel: String { L.weeklyLabel(lang, isMonthly: data.weeklyKind == "monthly") }
     private var usageTimeline: UsageTimeline {
-        UsageTimeline(daily: data.daily, resetCredits: data.rateLimitResetCredits)
+        UsageTimeline(
+            daily: data.daily,
+            resetCredits: data.rateLimitResetCredits,
+            weeklyResetAt: data.weekly?.resetsAt,
+            subscriptionEndsAt: data.subscriptionActiveUntil
+        )
     }
-    private var priceStatusLabel: String {
-        switch data.priceStatus {
-        case "live", "cached": return L.pricingSynced(lang)
-        case "partial": return L.pricingPartial(lang)
-        default: return L.pricingOffline(lang)
-        }
-    }
-
     /// Last 7 days vs. the 7 before that, both already covered by the existing
     /// `daily` array (well past the 14 this needs) — no extra history
     /// needs to be scanned/retained to answer "is this climbing or settling
@@ -57,13 +54,13 @@ struct DashboardView: View {
     private var tokenTrend: (percent: Int, up: Bool)? { trend { Double($0.tokens) } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             DashboardHeader(store: store, onPopoverStateChange: onPopoverStateChange)
-            // Model breakdown and top-projects each cap their own inner list
-            // to a fixed "3 rows, then scroll" height, so total content height
-            // is bounded without needing an outer scroll here too — the panel
-            // just resizes to fit it instead (see the background below and
-            // NotchWindowController.setContentHeight).
+            // Attribution is deliberately a two-column desktop group: models
+            // need the wider side for pricing and the expanded trend, while
+            // projects stay scannable in a narrower companion list. Both
+            // lists cap themselves at three visible rows, so panel height
+            // stays bounded (see `NotchWindowController.setContentHeight`).
             sections
         }
         .environment(\.appLanguage, lang)
@@ -93,18 +90,31 @@ struct DashboardView: View {
         // to sit below the session/weekly cards, but those two moved down
         // into the usage-overview card (see below), so this slides up into
         // the slot they vacated.
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             CompactStat(icon: "dollarsign.circle", label: L.todayCost(lang), value: Formatting.moneyLabel(data.todayCost))
-            VSep().padding(.horizontal, 12)
+            VSep().padding(.horizontal, 10)
             CompactStat(icon: "calendar", label: L.monthCost(lang), value: Formatting.moneyLabel(data.monthCost), trend: costTrend, judged: true)
-            VSep().padding(.horizontal, 12)
+            VSep().padding(.horizontal, 10)
             CompactStat(icon: "cube", label: L.monthTokens(lang), value: Formatting.tokenLabel(data.monthTokens), trend: tokenTrend)
-            VSep().padding(.horizontal, 12)
+            VSep().padding(.horizontal, 10)
             CompactStat(icon: "clock.arrow.circlepath", label: L.latestSessionTokens(lang), value: Formatting.tokenLabel(data.latestSessionTokens))
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color.notchCardFill))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.notchAccent.opacity(0.16), lineWidth: 1))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.notchCardHighlight, Color.notchCardFill],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(Color.notchCardBorder, lineWidth: 1)
+        )
 
         SectionCard(
             title: L.usageOverviewTitle(lang),
@@ -114,43 +124,48 @@ struct DashboardView: View {
                 tokens: Formatting.fourSignificantTokenLabel(Double(data.monthTokens) / 30)
             )
         ) {
-            // Session/weekly used to be their own full-width cards up top;
-            // they're squeezed down into compact quota blocks here instead,
-            // filling the heatmap's right side rather than leaving it blank.
-            HStack(alignment: .top, spacing: 16) {
+            // Keep the history dominant: the heatmap owns four fifths of the
+            // content row while the live quota summaries share the last fifth.
+            // The custom layout uses the available width rather than a fixed
+            // sidebar width, so the ratio remains stable as the panel resizes.
+            UsageOverviewLayout(leadingShare: 0.75, spacing: 16) {
                 UsageChartView(timeline: usageTimeline)
-                Spacer(minLength: 12)
-                VSep()
-                VStack(alignment: .leading, spacing: 16) {
+
+                VStack(spacing: 0) {
                     CompactQuotaBlock(
-                        title: L.sessionTitle(lang), icon: "gauge",
-                        hint: data.session?.windowMinutes.map { L.hourWindow(lang, $0 / 60) },
-                        limit: data.session
+                        title: L.dailyLabel(lang), icon: "gauge",
+                        hint: nil,
+                        limit: data.session,
+                        isNarrow: true
                     )
                     CompactQuotaBlock(
                         title: weeklyLabel, icon: "calendar",
-                        hint: data.weekly?.windowMinutes.map { L.dayWindow(lang, $0 / 1440) },
-                        limit: data.weekly
+                        hint: nil,
+                        limit: data.weekly,
+                        isNarrow: true
                     )
                 }
-                .frame(width: 230)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.notchRule)
+                        .frame(width: 1)
+                        .offset(x: -8)
+                }
             }
         }
 
-        SectionCard(
-            title: L.modelBreakdownTitle(lang),
-            icon: "cpu.fill",
-            trailing: priceStatusLabel
-        ) {
-            ModelBreakdownView(models: data.models, rates: data.pricingRates)
-        }
+        attributionCards
 
         SectionCard(
-            title: L.topProjectsTitle(lang),
-            icon: "folder.fill",
-            trailing: L.toolCallsAndEdits(lang, calls: data.monthToolCalls, edits: data.monthFilesChanged)
+            title: L.toolActivityTitle(lang),
+            icon: "wrench.and.screwdriver.fill",
+            trailing: L.last30Days(lang)
         ) {
-            ProjectListView(projects: data.topProjects)
+            ToolActivitySummaryView(
+                calls: data.monthToolCalls,
+                edits: data.monthFilesChanged,
+                tools: data.tools
+            )
         }
 
         if store.provider == .codex, let activity = data.activeProject {
@@ -158,16 +173,130 @@ struct DashboardView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
         }
 
-        Text(
-            data.monthUnpricedModels.isEmpty
-                ? L.footnotePriced(lang)
-                : L.footnoteUnpriced(lang, models: data.monthUnpricedModels.joined(separator: "、"))
-        )
-        .font(.system(size: 10)).foregroundStyle(Color.notchMutedInk)
-        .fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Color.notchAccent)
+                .padding(.top, 1)
+            Text(
+                data.monthUnpricedModels.isEmpty
+                    ? L.footnotePriced(lang)
+                    : L.footnoteUnpriced(lang, models: data.monthUnpricedModels.joined(separator: "、"))
+            )
+            .font(.system(size: 10))
+            .foregroundStyle(Color.notchMutedInk)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 2)
 
         if let error = data.error {
-            Text(error).font(.system(size: 11)).foregroundStyle(Color(red: 1.000, green: 0.720, blue: 0.220))
+            Label(error, systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(Color(red: 1.000, green: 0.720, blue: 0.220))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color(red: 1.000, green: 0.720, blue: 0.220).opacity(0.09))
+                )
         }
+    }
+
+    /// Both attribution cards use identical flexible tracks and one explicit
+    /// height. This keeps a true 5:5 split as the panel changes width while
+    /// preserving aligned lower edges for their three-row viewports.
+    private var attributionCards: some View {
+        let cardHeight: CGFloat = 280
+
+        return HStack(alignment: .top, spacing: 10) {
+            SectionCard(
+                title: L.modelBreakdownTitle(lang),
+                icon: "cpu.fill",
+                trailing: nil,
+                fixedHeight: cardHeight
+            ) {
+                ModelBreakdownView(
+                    models: data.models,
+                    rates: data.pricingRates,
+                    isCompact: true
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            SectionCard(
+                title: L.topProjectsTitle(lang),
+                icon: "folder.fill",
+                trailing: nil,
+                fixedHeight: cardHeight
+            ) {
+                ProjectListView(projects: data.topProjects)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
+/// Splits the usage overview into two predictable tracks without tying either
+/// side to a fixed point width. SwiftUI's `Layout` protocol is available on the
+/// app's macOS 13 deployment target and preserves each child's natural height.
+private struct UsageOverviewLayout: Layout {
+    var leadingShare: CGFloat
+    var spacing: CGFloat
+
+    private func widths(for totalWidth: CGFloat) -> (leading: CGFloat, trailing: CGFloat) {
+        let available = max(0, totalWidth - spacing)
+        let share = min(1, max(0, leadingShare))
+        let leading = available * share
+        return (leading, available - leading)
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard subviews.count >= 2 else {
+            return subviews.first?.sizeThatFits(proposal) ?? .zero
+        }
+
+        guard let proposedWidth = proposal.width else {
+            let leading = subviews[0].sizeThatFits(.unspecified)
+            let trailing = subviews[1].sizeThatFits(.unspecified)
+            return CGSize(
+                width: leading.width + spacing + trailing.width,
+                height: max(leading.height, trailing.height)
+            )
+        }
+
+        let split = widths(for: proposedWidth)
+        let leading = subviews[0].sizeThatFits(
+            ProposedViewSize(width: split.leading, height: proposal.height)
+        )
+        let trailing = subviews[1].sizeThatFits(
+            ProposedViewSize(width: split.trailing, height: proposal.height)
+        )
+        return CGSize(width: proposedWidth, height: max(leading.height, trailing.height))
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard subviews.count >= 2 else { return }
+        let split = widths(for: bounds.width)
+
+        subviews[0].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: split.leading, height: bounds.height)
+        )
+        subviews[1].place(
+            at: CGPoint(x: bounds.minX + split.leading + spacing, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: split.trailing, height: bounds.height)
+        )
     }
 }

@@ -11,6 +11,7 @@ struct QuotaMeterView: View {
     /// DashboardView) so the oversized background glyph below reads as "this
     /// card, blown up" rather than a random decoration.
     var icon: String = "gauge"
+    var isCompact: Bool = false
     @Environment(\.appLanguage) private var lang
     /// Kept separate from the water level so the ring can always draw from
     /// zero to the current value, including on its first appearance.
@@ -34,7 +35,7 @@ struct QuotaMeterView: View {
     private static let ringSize: CGFloat = 60
     private static let ringWidth: CGFloat = 6
 
-    var body: some View {
+    private var regularMeter: some View {
         ZStack(alignment: .trailing) {
             // The ring + numeral naturally hug the leading edge, leaving the
             // card's trailing half empty — rather than fight that with more
@@ -115,6 +116,47 @@ struct QuotaMeterView: View {
                     }
                 }
                 Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var compactMeter: some View {
+        ZStack {
+            Circle()
+                .fill(ringColor.opacity(0.14))
+                .blur(radius: 9)
+                .opacity(remaining == nil ? 0 : 0.55)
+            Circle()
+                .stroke(Color.notchTrack, lineWidth: 6)
+            if let remaining {
+                RingWaterFill(percent: remaining, color: ringColor)
+                    .frame(width: 49, height: 49)
+                    .clipShape(Circle())
+            }
+            Circle()
+                .trim(from: 0, to: animatedRingProgress)
+                .stroke(ringColor, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            if let remaining {
+                Text("\(remaining)%")
+                    .font(.system(size: 16.5, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(ringColor)
+            } else {
+                Image(systemName: "moon.zzz.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.notchMutedInk)
+            }
+        }
+        .frame(width: 68, height: 68)
+    }
+
+    var body: some View {
+        Group {
+            if isCompact {
+                compactMeter
+            } else {
+                regularMeter
             }
         }
         .onAppear {
