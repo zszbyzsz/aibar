@@ -4,12 +4,11 @@ import Combine
 
 /// Two unobtrusive quota readouts that sit beside the physical notch. They are
 /// deliberately separate windows so the center remains available to the
-/// dashboard's existing hover hotzone.
+/// dashboard's existing hover hotzone. They are hidden only while that
+/// dashboard is presented; activity-capsule state never affects them.
 @MainActor
 final class QuotaStatusBarController: NSObject {
     private let store: UsageStore
-    private let presentActivity: () -> Bool
-    private let dismissActivity: () -> Void
     /// Pure background fill for software screenshots of the camera gap.
     /// It is ordered before every interactive surface and ignores the mouse.
     private let cameraBridgePanel: NSPanel
@@ -17,12 +16,7 @@ final class QuotaStatusBarController: NSObject {
     private let rightPanel: NSPanel
     private var quotaSubscription: AnyCancellable?
     private var readoutsVisible = true
-    /// While activity is presented from a side readout, its panel remains on
-    /// screen but transparent. That preserves the side's tracking area so a
-    /// stationary cursor cannot repeatedly re-enter when the readout is
-    /// restored.
-    private var isPresentingActivity = false
-    private var hoveringSides: Set<QuotaSideReadoutView.Side> = []
+    private var isDashboardPresented = false
     private var isScreenshotSuppressed = false
 
     /// Just enough room for a two-digit readout. Keeping these wings narrow
@@ -41,14 +35,8 @@ final class QuotaStatusBarController: NSObject {
         rawValue: NSWindow.Level.statusBar.rawValue + 1
     )
 
-    init(
-        store: UsageStore,
-        presentActivity: @escaping () -> Bool,
-        dismissActivity: @escaping () -> Void
-    ) {
+    init(store: UsageStore) {
         self.store = store
-        self.presentActivity = presentActivity
-        self.dismissActivity = dismissActivity
         cameraBridgePanel = Self.makePanel(ignoresMouseEvents: true)
         leftPanel = Self.makePanel()
         rightPanel = Self.makePanel()
@@ -64,14 +52,10 @@ final class QuotaStatusBarController: NSObject {
         bridgeView.layer?.backgroundColor = NSColor.black.cgColor
         cameraBridgePanel.contentView = bridgeView
         leftPanel.contentView = NSHostingView(
-            rootView: QuotaSideReadoutView(store: store, side: .left) { [weak self] side, hovering in
-                self?.setSideHovering(side, hovering: hovering)
-            }
+            rootView: QuotaSideReadoutView(store: store, side: .left)
         )
         rightPanel.contentView = NSHostingView(
-            rootView: QuotaSideReadoutView(store: store, side: .right) { [weak self] side, hovering in
-                self?.setSideHovering(side, hovering: hovering)
-            }
+            rootView: QuotaSideReadoutView(store: store, side: .right)
         )
         reposition()
         quotaSubscription = store.$payload.sink { [weak self] _ in
@@ -89,15 +73,17 @@ final class QuotaStatusBarController: NSObject {
         NotificationCenter.default.removeObserver(self)
     }
 
-    /// Restores the collapsed state after the activity stack is no longer
-    /// expanded. Screenshot suppression always wins over this request.
+    /// Restores the readouts according to their own state. Dashboard and
+    /// screenshot suppression still win over this request.
     func showReadouts() {
-        guard !isScreenshotSuppressed else { return }
-        isPresentingActivity = false
         readoutsVisible = true
-        leftPanel.alphaValue = 1
-        rightPanel.alphaValue = 1
         reposition()
+        updatePanelVisibility()
+    }
+
+    func setDashboardPresented(_ presented: Bool) {
+        guard presented != isDashboardPresented else { return }
+        isDashboardPresented = presented
         updatePanelVisibility()
     }
 
@@ -111,36 +97,11 @@ final class QuotaStatusBarController: NSObject {
         }
     }
 
-    private func setSideHovering(_ side: QuotaSideReadoutView.Side, hovering: Bool) {
-        guard !isScreenshotSuppressed else { return }
-        if hovering {
-            hoveringSides.insert(side)
-            guard presentActivity() else { return }
-            isPresentingActivity = true
-            hideReadouts(keepingTracking: true)
-        } else {
-            hoveringSides.remove(side)
-            guard isPresentingActivity, hoveringSides.isEmpty else { return }
-            dismissActivity()
-        }
-    }
-
-    private func hideReadouts(keepingTracking: Bool = false) {
+    private func hideReadouts() {
         readoutsVisible = false
-        if keepingTracking {
-            // `orderOut` destroys the hover target. Keeping a fully
-            // transparent panel ordered makes the side readout and activity
-            // stack mutually exclusive without causing hover churn.
-            leftPanel.alphaValue = 0
-            rightPanel.alphaValue = 0
-            showCameraBridgeIfAvailable()
-            leftPanel.orderFrontRegardless()
-            rightPanel.orderFrontRegardless()
-        } else {
-            cameraBridgePanel.orderOut(nil)
-            leftPanel.orderOut(nil)
-            rightPanel.orderOut(nil)
-        }
+        cameraBridgePanel.orderOut(nil)
+        leftPanel.orderOut(nil)
+        rightPanel.orderOut(nil)
     }
 
     /// Keep both notch wings visible whenever the readouts are enabled. Codex
@@ -148,11 +109,12 @@ final class QuotaStatusBarController: NSObject {
     /// value with a muted em dash is clearer than making the entire side look
     /// broken or causing the wings to jump around between refreshes.
     private func updatePanelVisibility() {
-        if isPresentingActivity, !isScreenshotSuppressed {
-            hideReadouts(keepingTracking: true)
-            return
-        }
-        guard readoutsVisible, !isScreenshotSuppressed else {
+        let shouldShow = FloatingSurfaceVisibilityPolicy.showsQuotaReadouts(
+            requested: readoutsVisible,
+            dashboardPresented: isDashboardPresented,
+            screenshotSuppressed: isScreenshotSuppressed
+        )
+        guard shouldShow else {
             cameraBridgePanel.orderOut(nil)
             leftPanel.orderOut(nil)
             rightPanel.orderOut(nil)
@@ -233,7 +195,6 @@ private struct QuotaSideReadoutView: View {
 
     @ObservedObject var store: UsageStore
     let side: Side
-    let onHover: (Side, Bool) -> Void
 
     private var remainingPercent: Int? {
         let limit: LimitView?
@@ -304,10 +265,6 @@ private struct QuotaSideReadoutView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(tabShape)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            onHover(side, hovering)
-        }
         .accessibilityLabel(accessibilityLabel)
     }
 }

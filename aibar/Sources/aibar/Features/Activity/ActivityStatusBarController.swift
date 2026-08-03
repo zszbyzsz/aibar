@@ -127,11 +127,7 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// a show that happened right after it was scheduled.
     private var isPanelVisible = false
     private var isScreenshotSuppressed = false
-    /// Set only for the temporary hand-off from the side quota readouts. When
-    /// that expanded status view folds back up, its owner restores the two
-    /// percentage readouts beside the notch.
-    private var presentedFromQuotaReadout = false
-    var onQuotaPresentationCollapsed: (() -> Void)?
+    private var isDashboardPresented = false
     /// User-facing on/off switch from the status-item menu. Polling continues
     /// while hidden so re-enabling immediately reflects current activity.
     private(set) var isEnabled = ActivityStatusBarController.loadEnabledPreference()
@@ -483,7 +479,6 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         guard collapse, isExpanded else { return }
         withAnimation(.notchSpring) { isExpanded = false }
         restartPollTimer(interval: Self.pollIntervalCollapsed)
-        finishQuotaPresentationIfNeeded()
     }
 
     private func installOutsideClickMonitors() {
@@ -592,44 +587,10 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
                 withAnimation(.notchSpring) { self.isExpanded = false }
                 self.resizeForCurrentContent()
                 self.restartPollTimer(interval: Self.pollIntervalCollapsed)
-                self.finishQuotaPresentationIfNeeded()
             }
             collapseWorkItem = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
         }
-    }
-
-    /// Expands the activity stack after the pointer enters a side quota
-    /// readout. The caller hides its readouts only when this returns true, so
-    /// an empty or disabled capsule never leaves the user with no UI at all.
-    ///
-    /// This deliberately stays open while the pointer remains in a side
-    /// readout. The readout controller keeps an invisible tracking surface in
-    /// that location, so removing its visible pixels does not turn a stationary
-    /// cursor into a repeated enter/leave loop.
-    func presentFromQuotaReadout() -> Bool {
-        guard isEnabled, !rows.isEmpty, !isScreenshotSuppressed else { return false }
-        presentedFromQuotaReadout = true
-        setListHovering(true)
-        return true
-    }
-
-    /// The pointer left the side quota readout. Reuse the normal capsule
-    /// leave path so its grace period still permits a smooth hand-off into
-    /// the stack directly below the notch.
-    func dismissQuotaReadoutPresentation() {
-        guard presentedFromQuotaReadout else { return }
-        guard isExpanded else {
-            finishQuotaPresentationIfNeeded()
-            return
-        }
-        setListHovering(false)
-    }
-
-    private func finishQuotaPresentationIfNeeded() {
-        guard presentedFromQuotaReadout else { return }
-        presentedFromQuotaReadout = false
-        onQuotaPresentationCollapsed?()
     }
 
     /// A fresh reading of what the newly revealed rows are showing, held back
@@ -660,7 +621,12 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// focus, which is exactly when someone is most likely to be watching
     /// for it. Called whenever activity state changes.
     private func updateVisibility() {
-        let shouldShow = isEnabled && !rows.isEmpty && !isScreenshotSuppressed
+        let shouldShow = FloatingSurfaceVisibilityPolicy.showsActivityCapsule(
+            enabled: isEnabled,
+            hasContent: !rows.isEmpty,
+            dashboardPresented: isDashboardPresented,
+            screenshotSuppressed: isScreenshotSuppressed
+        )
         guard shouldShow != isPanelVisible else {
             // The notch dashboard is a separate status-level panel. Opening
             // it (or a Space/display transition) can reorder it above this
@@ -691,7 +657,21 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
             }
             hideWorkItem = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
-            finishQuotaPresentationIfNeeded()
+        }
+    }
+
+    func setDashboardPresented(_ presented: Bool) {
+        guard presented != isDashboardPresented else { return }
+        isDashboardPresented = presented
+        if presented {
+            // Dashboard presentation is a hard mutual-exclusion boundary, so
+            // do not leave the capsule ordered on screen for the normal
+            // fade-out grace period.
+            hideWorkItem?.cancel()
+            isPanelVisible = false
+            panel.orderOut(nil)
+        } else {
+            updateVisibility()
         }
     }
 
@@ -701,7 +681,6 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         isEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: Self.enabledDefaultsKey)
         updateVisibility()
-        if !enabled { finishQuotaPresentationIfNeeded() }
     }
 
     /// Keeps the always-on activity capsule out of screenshots made by this

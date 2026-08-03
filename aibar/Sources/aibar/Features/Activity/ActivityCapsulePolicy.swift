@@ -1,5 +1,27 @@
 import Foundation
 
+/// Centralizes the one visibility relationship shared by the three floating
+/// surfaces: the dashboard suppresses both companions, while the notch-side
+/// quota readouts and activity capsule otherwise make independent decisions.
+enum FloatingSurfaceVisibilityPolicy {
+    static func showsQuotaReadouts(
+        requested: Bool,
+        dashboardPresented: Bool,
+        screenshotSuppressed: Bool
+    ) -> Bool {
+        requested && !dashboardPresented && !screenshotSuppressed
+    }
+
+    static func showsActivityCapsule(
+        enabled: Bool,
+        hasContent: Bool,
+        dashboardPresented: Bool,
+        screenshotSuppressed: Bool
+    ) -> Bool {
+        enabled && hasContent && !dashboardPresented && !screenshotSuppressed
+    }
+}
+
 /// A completed task retained in the capsule's short-lived history shelf.
 /// This is intentionally runtime-only state; nothing about task activity is
 /// persisted after aibar exits.

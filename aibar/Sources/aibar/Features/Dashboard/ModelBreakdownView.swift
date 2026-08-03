@@ -96,48 +96,52 @@ struct ModelBreakdownView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
-                legend(Self.inputColor, L.legendInput(lang))
-                legend(Self.cachedColor, L.legendCached(lang))
-                legend(Self.outputColor, L.legendOutput(lang))
-                Spacer()
-                Text(L.hoverForBreakdown(lang)).font(.system(size: 9)).foregroundStyle(Color.notchMutedInk)
-            }
-            .padding(.bottom, 9)
-
-            // Fixed-height rows (see ModelRow.rowHeight) so exactly 3 rows show
-            // before scrolling kicks in, with the remaining rows (up to the
-            // 13-row cap above) reachable by scrolling instead of growing the
-            // card unbounded.
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(displayed.enumerated()), id: \.element.id) { index, item in
-                        if index > 0 {
-                            Rectangle().fill(Color.notchRule).frame(height: 1)
-                        }
-                        ModelRow(
-                            item: item,
-                            price: rates[item.model],
-                            share: item.apiEquivalentCost / totalCost,
-                            color: item.model == Self.unpricedModelKey ? Color.notchMutedInk : Self.palette[index % Self.palette.count],
-                            icon: icon(for: item.model),
-                            isHovered: hovered == item.model,
-                            isCompact: isCompact
-                        )
-                        .onHover { isHovering in hovered = isHovering ? item.model : (hovered == item.model ? nil : hovered) }
+        // Fixed-height rows (see ModelRow.rowHeight) so exactly 3 rows show
+        // before scrolling kicks in, with the remaining rows (up to the
+        // 13-row cap above) reachable by scrolling instead of growing the
+        // card unbounded. The legend now lives in the parent card header.
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(displayed.enumerated()), id: \.element.id) { index, item in
+                    if index > 0 {
+                        Rectangle().fill(Color.notchRule).frame(height: 1)
                     }
+                    ModelRow(
+                        item: item,
+                        price: rates[item.model],
+                        share: item.apiEquivalentCost / totalCost,
+                        color: item.model == Self.unpricedModelKey ? Color.notchMutedInk : Self.palette[index % Self.palette.count],
+                        icon: icon(for: item.model),
+                        isHovered: hovered == item.model,
+                        isCompact: isCompact
+                    )
+                    .onHover { isHovering in hovered = isHovering ? item.model : (hovered == item.model ? nil : hovered) }
                 }
             }
-            .scrollIndicators(.visible)
-            .frame(height: ModelRow.rowHeight * 3 + 2) // 3 rows + the 2 dividers between them
+        }
+        .scrollIndicators(.visible)
+        .frame(height: ModelRow.rowHeight * 3 + 2) // 3 rows + the 2 dividers between them
+    }
+}
+
+struct ModelCompositionLegend: View {
+    @Environment(\.appLanguage) private var lang
+
+    var body: some View {
+        HStack(spacing: 9) {
+            legend(ModelBreakdownView.inputColor, L.legendInput(lang))
+            legend(ModelBreakdownView.cachedColor, L.legendCached(lang))
+            legend(ModelBreakdownView.outputColor, L.legendOutput(lang))
         }
     }
 
     private func legend(_ color: Color, _ label: String) -> some View {
         HStack(spacing: 3) {
             Circle().fill(color).frame(width: 5, height: 5)
-            Text(label).font(.system(size: 9.5)).foregroundStyle(Color.notchMutedInk)
+            Text(label)
+                .font(.system(size: 8.5))
+                .foregroundStyle(Color.notchMutedInk)
+                .lineLimit(1)
         }
     }
 }

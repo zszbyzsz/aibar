@@ -20,6 +20,7 @@ private struct ContentHeightKey: PreferenceKey {
 
 struct DashboardView: View {
     @ObservedObject var store: UsageStore
+    @State private var usageTimelineStatus: String?
     /// Lets the panel size itself to fit — see `NotchWindowController.setContentHeight`.
     var onHeightChange: (CGFloat) -> Void = { _ in }
     /// Forwarded down to `DashboardHeader`'s share popover — see
@@ -65,7 +66,13 @@ struct DashboardView: View {
         }
         .environment(\.appLanguage, lang)
         .foregroundStyle(Color.notchInk)
-        .padding(18)
+        // The two header groups flank the physical notch, so they can safely
+        // use the otherwise empty top band. Keep the roomier side and bottom
+        // padding for the cards below while letting the header sit naturally
+        // against the top edge.
+        .padding(.horizontal, 18)
+        .padding(.bottom, 18)
+        .padding(.top, 8)
         // Without this, the background GeometryReader below reports whatever
         // height the hosting NSPanel currently happens to be (it stretches to
         // fill any proposed size), not this content's own ideal height — which
@@ -129,7 +136,10 @@ struct DashboardView: View {
             // The custom layout uses the available width rather than a fixed
             // sidebar width, so the ratio remains stable as the panel resizes.
             UsageOverviewLayout(leadingShare: 0.75, spacing: 16) {
-                UsageChartView(timeline: usageTimeline)
+                UsageChartView(
+                    timeline: usageTimeline,
+                    onStatusChange: { usageTimelineStatus = $0 }
+                )
 
                 VStack(spacing: 0) {
                     CompactQuotaBlock(
@@ -152,6 +162,16 @@ struct DashboardView: View {
                         .offset(x: -8)
                 }
             }
+        }
+        .overlay(alignment: .top) {
+            Text(usageTimelineStatus ?? L.heatmapTimelineHint(lang, days: usageTimeline.points.count))
+                .font(.system(size: 10, weight: usageTimelineStatus == nil ? .regular : .semibold))
+                .foregroundStyle(usageTimelineStatus == nil ? Color.notchMutedInk : Color.notchAccent)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: 360)
+                .padding(.top, 19)
+                .allowsHitTesting(false)
         }
 
         attributionCards
@@ -207,7 +227,7 @@ struct DashboardView: View {
     /// height. This keeps a true 5:5 split as the panel changes width while
     /// preserving aligned lower edges for their three-row viewports.
     private var attributionCards: some View {
-        let cardHeight: CGFloat = 280
+        let cardHeight: CGFloat = 256
 
         return HStack(alignment: .top, spacing: 10) {
             SectionCard(
@@ -222,12 +242,25 @@ struct DashboardView: View {
                     isCompact: true
                 )
             }
+            .overlay(alignment: .top) {
+                Text(L.hoverForBreakdown(lang))
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.notchMutedInk)
+                    .padding(.top, 20)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .topTrailing) {
+                ModelCompositionLegend()
+                    .padding(.top, 19)
+                    .padding(.trailing, 14)
+                    .allowsHitTesting(false)
+            }
             .frame(maxWidth: .infinity, alignment: .topLeading)
 
             SectionCard(
                 title: L.topProjectsTitle(lang),
                 icon: "folder.fill",
-                trailing: nil,
+                trailing: L.projectExpandDetailHint(lang),
                 fixedHeight: cardHeight
             ) {
                 ProjectListView(projects: data.topProjects)

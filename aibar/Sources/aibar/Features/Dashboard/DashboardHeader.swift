@@ -41,7 +41,7 @@ struct DashboardHeader: View {
     }
 
     var body: some View {
-        HStack(alignment: .center) {
+        HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 controls
                 HStack(spacing: 4) {

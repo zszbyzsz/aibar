@@ -2,6 +2,46 @@ import XCTest
 @testable import aibar
 
 final class ActivityCapsulePolicyTests: XCTestCase {
+    func testDashboardSuppressesBothCompanionSurfaces() {
+        XCTAssertFalse(FloatingSurfaceVisibilityPolicy.showsQuotaReadouts(
+            requested: true,
+            dashboardPresented: true,
+            screenshotSuppressed: false
+        ))
+        XCTAssertFalse(FloatingSurfaceVisibilityPolicy.showsActivityCapsule(
+            enabled: true,
+            hasContent: true,
+            dashboardPresented: true,
+            screenshotSuppressed: false
+        ))
+    }
+
+    func testCompanionSurfacesRestoreFromTheirOwnState() {
+        XCTAssertTrue(FloatingSurfaceVisibilityPolicy.showsQuotaReadouts(
+            requested: true,
+            dashboardPresented: false,
+            screenshotSuppressed: false
+        ))
+        XCTAssertFalse(FloatingSurfaceVisibilityPolicy.showsActivityCapsule(
+            enabled: false,
+            hasContent: true,
+            dashboardPresented: false,
+            screenshotSuppressed: false
+        ))
+
+        XCTAssertFalse(FloatingSurfaceVisibilityPolicy.showsQuotaReadouts(
+            requested: false,
+            dashboardPresented: false,
+            screenshotSuppressed: false
+        ))
+        XCTAssertTrue(FloatingSurfaceVisibilityPolicy.showsActivityCapsule(
+            enabled: true,
+            hasContent: true,
+            dashboardPresented: false,
+            screenshotSuppressed: false
+        ))
+    }
+
     private let now = Date(timeIntervalSinceReferenceDate: 10_000)
 
     func testCompletionIsAnnouncedFirstThenRetainedAfterRunningRows() {

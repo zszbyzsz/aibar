@@ -242,6 +242,7 @@ struct UsageTimeline {
 /// date/cost/tokens, same as the old chart's tooltip.
 struct UsageChartView: View {
     var timeline: UsageTimeline
+    var onStatusChange: (String?) -> Void = { _ in }
     @State private var hovered: DailyPoint?
     @Environment(\.appLanguage) private var lang
 
@@ -264,6 +265,33 @@ struct UsageChartView: View {
     private static let resetScheduledColor = Color(red: 1.000, green: 0.620, blue: 0.160)
 
     private var daily: [DailyPoint] { timeline.points }
+
+    private func statusText(for point: DailyPoint) -> String {
+        let markers = markerLabels(for: point)
+        let expiries = resetExpiries(for: point)
+        if !expiries.isEmpty {
+            return L.heatmapResetHover(
+                lang,
+                date: shortDate(point.date),
+                count: expiries.count,
+                times: expiries.map { Formatting.compactTimeLabel($0) }.joined(separator: ", "),
+                additionalMarkers: markers
+            )
+        }
+        if !markers.isEmpty {
+            return L.heatmapMarkerHover(
+                lang,
+                date: shortDate(point.date),
+                markers: markers.joined(separator: " · ")
+            )
+        }
+        return L.heatmapHover(
+            lang,
+            date: shortDate(point.date),
+            cost: Formatting.moneyLabel(point.cost),
+            tokens: Formatting.tokenLabel(point.tokens)
+        )
+    }
 
     private static let isoFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -545,43 +573,6 @@ struct UsageChartView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                if let hovered {
-                    let markers = markerLabels(for: hovered)
-                    let expiries = resetExpiries(for: hovered)
-                    let hasUrgentReset = expiries.contains { ResetExpiryUrgency.isDetailed($0) }
-                    Text(
-                        !expiries.isEmpty
-                            ? L.heatmapResetHover(
-                                lang,
-                                date: shortDate(hovered.date),
-                                count: expiries.count,
-                                times: expiries.map { Formatting.compactTimeLabel($0) }.joined(separator: ", "),
-                                additionalMarkers: markers
-                            )
-                            : markers.isEmpty
-                            ? L.heatmapHover(lang, date: shortDate(hovered.date), cost: Formatting.moneyLabel(hovered.cost), tokens: Formatting.tokenLabel(hovered.tokens))
-                            : L.heatmapMarkerHover(
-                                lang,
-                                date: shortDate(hovered.date),
-                                markers: markers.joined(separator: " · ")
-                            )
-                    )
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(
-                            !expiries.isEmpty
-                                ? (hasUrgentReset ? Self.resetUrgentColor : Self.resetScheduledColor)
-                                : (markers.isEmpty ? Color.notchAccent : Color.notchInk)
-                        )
-                } else {
-                    Text(L.heatmapTimelineHint(lang, days: daily.count))
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.notchMutedInk)
-                }
-                Spacer()
-            }
-            .frame(height: 14)
-
             // Weekday labels as a leading column (rows, not a header row) now
             // that weeks run left to right — each label lines up with its own
             // row across every week-column below it.
@@ -630,7 +621,13 @@ struct UsageChartView: View {
                                         .overlay(markerBorders(for: point))
                                         .onHover { isHovering in
                                             guard let point else { return }
-                                            hovered = isHovering ? point : (hovered?.id == point.id ? nil : hovered)
+                                            if isHovering {
+                                                hovered = point
+                                                onStatusChange(statusText(for: point))
+                                            } else if hovered?.id == point.id {
+                                                hovered = nil
+                                                onStatusChange(nil)
+                                            }
                                         }
                                 }
                             }
@@ -645,5 +642,9 @@ struct UsageChartView: View {
             // deliberately undocumented as an easter egg.
             compactLegend
         }
+        .onChange(of: lang) { _ in
+            onStatusChange(hovered.map(statusText(for:)))
+        }
+        .onDisappear { onStatusChange(nil) }
     }
 }

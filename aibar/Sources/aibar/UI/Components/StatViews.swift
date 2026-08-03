@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// A single number in the merged overview strip. Each stat keeps its icon and
-/// label on one quiet line, then gives the value a full line of width. This is
-/// especially important for the longer English API-cost labels at 720pt.
+/// A single number in the merged overview strip. Each stat keeps its icon,
+/// label, and optional comparison on one quiet line, then gives the value a
+/// full second line. This keeps every column at two rows in both languages.
 ///
 /// `trend`, when present, compares the last 7 days against the 7 days before
 /// that (both already inside the 30-day window, so no extra history needs to
@@ -41,14 +41,9 @@ struct CompactStat: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
                     .help(label)
-            }
 
-            Text(value)
-                .font(.system(size: 15, weight: .bold).monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                Spacer(minLength: 2)
 
-            Group {
                 if let trend {
                     HStack(spacing: 3) {
                         Image(systemName: trend.up ? "arrow.up" : "arrow.down")
@@ -56,13 +51,17 @@ struct CompactStat: View {
                         Text(L.trendVsPrior7d(lang, abs(trend.percent)))
                             .font(.system(size: 8.5))
                             .lineLimit(1)
+                            .minimumScaleFactor(0.72)
                     }
                     .foregroundStyle(trendColor)
-                } else {
-                    Color.clear
+                    .layoutPriority(1)
                 }
             }
-            .frame(height: 10, alignment: .leading)
+
+            Text(value)
+                .font(.system(size: 15, weight: .bold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .combine)

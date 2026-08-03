@@ -16,6 +16,9 @@ final class NotchWindowController: NSObject, ObservableObject {
     // SwiftUI's view graph was concerned, so the panel resized but kept showing the
     // invisible idle content.
     @Published private(set) var isExpanded = false
+    /// Keeps the independently managed notch-side readouts and activity
+    /// capsule informed when the dashboard owns the notch presentation.
+    var onPresentationChange: ((Bool) -> Void)?
     private var idleFrame = CGRect.zero
     private var expandedFrame = CGRect.zero
     // Anchors for `expandedFrameRect(forHeight:)` — kept separately from
@@ -223,6 +226,10 @@ final class NotchWindowController: NSObject, ObservableObject {
         }
         guard expanded != isExpanded else { return }
         isExpanded = expanded
+        if expanded {
+            // Companions disappear before the dashboard begins growing.
+            onPresentationChange?(true)
+        }
         panel.hasShadow = expanded
         if expanded {
             // Reassert front ordering when the panel grows from the invisible
@@ -236,6 +243,14 @@ final class NotchWindowController: NSObject, ObservableObject {
             context.duration = 0.28
             context.timingFunction = .notchSpring
             panel.animator().setFrame(expanded ? expandedFrame : idleFrame, display: true)
+        } completionHandler: { [weak self] in
+            guard !expanded else { return }
+            Task { @MainActor [weak self] in
+                guard let self, !self.isExpanded else { return }
+                // Restore each companion from its own state only after the
+                // dashboard has completely returned to the idle hotzone.
+                self.onPresentationChange?(false)
+            }
         }
         // The background scan stays deliberately sparse while the panel is
         // hidden.  Once shown, take an immediate reading and then let
@@ -322,6 +337,12 @@ private struct RootView: View {
                     onHeightChange: { controller.setContentHeight($0) },
                     onPopoverStateChange: { controller.setPopoverOpen($0) }
                 )
+                    // The dashboard has an intrinsic height which can change
+                    // when localized copy reflows. Pin it to the top of the
+                    // hosting panel so a shorter English layout cannot be
+                    // vertically centered and leave a dead band below the
+                    // notch while the AppKit frame catches up.
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .background(NotchCardBackground())
                     .clipShape(NotchShape.attached())
                     // Crossfades against the AppKit frame resize driven by

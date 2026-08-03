@@ -18,18 +18,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notchController = NotchWindowController(store: UsageStore())
         activityStatusBarController = ActivityStatusBarController()
         if let usageStore = notchController?.usageStore {
-            quotaStatusBarController = QuotaStatusBarController(
-                store: usageStore,
-                presentActivity: { [weak self] in
-                    self?.activityStatusBarController?.presentFromQuotaReadout() ?? false
-                },
-                dismissActivity: { [weak self] in
-                    self?.activityStatusBarController?.dismissQuotaReadoutPresentation()
-                }
-            )
-            activityStatusBarController?.onQuotaPresentationCollapsed = { [weak self] in
-                self?.quotaStatusBarController?.showReadouts()
-            }
+            quotaStatusBarController = QuotaStatusBarController(store: usageStore)
+        }
+        // The dashboard is the only mutually exclusive surface. The activity
+        // capsule and notch-side quota readouts otherwise retain their own
+        // independent visibility state and never toggle one another.
+        notchController?.onPresentationChange = { [weak self] presented in
+            self?.activityStatusBarController?.setDashboardPresented(presented)
+            self?.quotaStatusBarController?.setDashboardPresented(presented)
         }
         screenshotCoordinator = ScreenshotCoordinator(
             language: { [weak self] in self?.notchController?.currentLanguage ?? .zh },

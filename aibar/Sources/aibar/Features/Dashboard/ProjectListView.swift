@@ -13,10 +13,9 @@ struct ProjectListView: View {
     /// Fixed row height (see ModelRow.rowHeight) so exactly 3 rows show
     /// before the list scrolls, matching the model card's behavior.
     static let rowHeight: CGFloat = 64
-    /// Match the compact model card's legend + three-row viewport so both
-    /// attribution cards retain one continuous lower edge even when there are
-    /// fewer than three projects to show.
-    static let compactCardContentHeight: CGFloat = 218
+    /// Three rows plus their two dividers. Header metadata now sits in the
+    /// parent card's title row, so no extra legend-height reservation remains.
+    static let compactCardContentHeight: CGFloat = rowHeight * 3 + 2
 
     /// Same validated 8-hue order as the model list (first 4 slots), so a
     /// project and a model never accidentally share a color language while

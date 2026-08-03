@@ -63,7 +63,10 @@ enum L {
     static func today(_ lang: AppLanguage) -> String { lang == .zh ? "今天" : "Today" }
 
     static func trendVsPrior7d(_ lang: AppLanguage, _ percent: Int) -> String {
-        lang == .zh ? "\(percent)% 较前7天" : "\(percent)% vs prior 7d"
+        // The trend shares a compact header row with labels such as
+        // “30d Tokens”; the shorter English form preserves both pieces at the
+        // dashboard's fixed four-column width.
+        lang == .zh ? "\(percent)% 较前7天" : "\(percent)% vs 7d"
     }
 
     static func legendInput(_ lang: AppLanguage) -> String { lang == .zh ? "输入" : "Input" }
@@ -99,6 +102,9 @@ enum L {
     }
     static func projectModelBreakdownHint(_ lang: AppLanguage) -> String {
         lang == .zh ? "点击查看模型 token 占比" : "Click to view model token shares"
+    }
+    static func projectExpandDetailHint(_ lang: AppLanguage) -> String {
+        lang == .zh ? "点击展开细节" : "Click for details"
     }
     static func projectModelShare(_ lang: AppLanguage, tokens: String, percent: Double) -> String {
         let percentage = String(format: "%.1f", percent)
