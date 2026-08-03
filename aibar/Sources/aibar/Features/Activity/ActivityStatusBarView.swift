@@ -55,7 +55,12 @@ private struct CapsuleRowView: View {
     var body: some View {
         content
             .foregroundStyle(Color.notchInk)
-            .capsuleChrome(isHighlighted: isHighlighted, isPressed: isPressed, isUpdate: isUpdate)
+            .capsuleChrome(
+                isHighlighted: isHighlighted,
+                isPressed: isPressed,
+                isUpdate: isUpdate,
+                isScreenControl: isScreenControl
+            )
             .frame(height: 32)
             .onTapGesture(perform: onTap)
             .simultaneousGesture(
@@ -96,7 +101,7 @@ private struct CapsuleRowView: View {
     @ViewBuilder private var content: some View {
         switch row.display {
         case .active(let activity):
-            ActivePillContent(activity: activity)
+            ActivePillContent(activity: activity, lang: lang)
         case .completed(let project, let outcome):
             CompletedPillContent(project: project, outcome: outcome, lang: lang)
         case .completionSummary(let count):
@@ -111,10 +116,20 @@ private struct CapsuleRowView: View {
         return false
     }
 
+    private var isScreenControl: Bool {
+        guard case .active(let activity) = row.display else { return false }
+        return activity.phase == .usingScreen
+    }
+
     private var accessibilityLabel: String {
         switch row.display {
         case .active(let activity):
-            return L.activityAccessibilityLabel(lang, project: activity.project, phase: activity.phase)
+            return L.activityAccessibilityLabel(
+                lang,
+                title: activity.displayTitle,
+                project: activity.project,
+                phase: activity.phase
+            )
         case .completed(let project, let outcome):
             return L.activityCompletedAccessibilityLabel(lang, project: project, outcome: outcome)
         case .completionSummary(let count):
@@ -171,22 +186,22 @@ private struct UpdatePillContent: View {
 /// icon, project name, live token count, and elapsed time.
 private struct ActivePillContent: View {
     var activity: ProjectActivity
+    var lang: AppLanguage
 
     var body: some View {
         HStack(spacing: 6) {
-            ActivityPulseDot()
-            Image(systemName: phaseIcon)
-                .font(.system(size: 10, weight: .semibold))
-            Text(activity.project)
+            phaseMarker
+            Text(activity.displayTitle)
                 .font(.system(size: 11, weight: .semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .help(activity.displayTitle)
             Spacer(minLength: 4)
-            // Fills what used to be dead space in the middle of the pill
-            // with a live token readout — it visibly ticks up as Codex
-            // generates, which is what actually reads as "still flowing"
-            // versus a static pill that merely doesn't age.
-            LiveTokenReadout(tokens: activity.sessionTokens)
+            ContextTokenReadout(
+                current: activity.currentContextTokens,
+                total: activity.conversationTokens,
+                lang: lang
+            )
             Spacer(minLength: 4)
             TimelineView(.periodic(from: Self.tickAnchor, by: 1)) { context in
                 HStack(spacing: 2) {
@@ -202,6 +217,20 @@ private struct ActivePillContent: View {
         }
     }
 
+    @ViewBuilder
+    private var phaseMarker: some View {
+        switch activity.phase {
+        case .usingScreen:
+            // The composed window + cursor badge is intentionally a single
+            // leading marker: unlike the ordinary pulse + phase pair, it
+            // reads as a distinct "Codex is operating the screen" state.
+            CodexScreenToolBadge(size: 20)
+        default:
+            ActivityPulseDot()
+            CodexActivityPhaseIcon(phase: activity.phase, size: 10)
+        }
+    }
+
     /// One shared origin for every row's elapsed-time clock. Anchoring each
     /// row's schedule to its own `.now` meant a ten-row stack ticked at ten
     /// unrelated points in the second, so SwiftUI woke up and ran a render
@@ -209,15 +238,6 @@ private struct ActivePillContent: View {
     /// any moment now land on the same boundaries and coalesce into a single
     /// update — the displayed second is identical either way.
     private static let tickAnchor = Date(timeIntervalSinceReferenceDate: 0)
-
-    private var phaseIcon: String {
-        switch activity.phase {
-        case .working: return "sparkles"
-        case .thinking: return "brain.head.profile"
-        case .usingTool: return "wrench.and.screwdriver"
-        case .editing: return "pencil.line"
-        }
-    }
 
     private static func compactAge(_ seconds: TimeInterval) -> String {
         let safeSeconds = max(0, Int(seconds))
@@ -273,21 +293,39 @@ private struct CompletedPillContent: View {
 /// digits roll rather than snap — but that transition only exists on macOS
 /// 14+, so it's applied conditionally rather than dropping support for the
 /// package's macOS 13 floor.
-private struct LiveTokenReadout: View {
-    var tokens: Int
+private struct ContextTokenReadout: View {
+    var current: Int
+    var total: Int
+    var lang: AppLanguage
 
     var body: some View {
-        let label = Text(Formatting.tokenLabel(tokens))
+        let currentLabel = Formatting.contextTokenLabel(current)
+        let totalLabel = Formatting.contextTokenLabel(total)
+
         Group {
             if #available(macOS 14.0, *) {
-                label.contentTransition(.numericText())
+                labels(current: currentLabel, total: totalLabel)
+                    .contentTransition(.numericText())
             } else {
-                label
+                labels(current: currentLabel, total: totalLabel)
             }
         }
         .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
-        .foregroundStyle(Color.notchAccent.opacity(0.85))
-        .animation(.easeOut(duration: 0.3), value: tokens)
+        .animation(.easeOut(duration: 0.3), value: current)
+        .animation(.easeOut(duration: 0.3), value: total)
+        .help(L.activityContextHint(lang))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            L.activityContextAccessibility(lang, current: currentLabel, total: totalLabel)
+        )
+    }
+
+    private func labels(current: String, total: String) -> some View {
+        HStack(spacing: 2) {
+            Text(current).foregroundStyle(Color.notchAccent)
+            Text("/").foregroundStyle(Color.notchMutedInk)
+            Text(total).foregroundStyle(Color.notchInk)
+        }
     }
 }
 
@@ -309,18 +347,31 @@ private extension View {
     /// vector geometry, costs nothing comparable, and unlike the shadow it's
     /// visible (an outward shadow would in any case be clipped away, since the
     /// panel is sized to the capsule itself with nothing to spill into).
-    func capsuleChrome(isHighlighted: Bool, isPressed: Bool, isUpdate: Bool) -> some View {
+    func capsuleChrome(
+        isHighlighted: Bool,
+        isPressed: Bool,
+        isUpdate: Bool,
+        isScreenControl: Bool
+    ) -> some View {
         self
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
                 Capsule()
-                    .fill(isUpdate ? Color(red: 0.125, green: 0.082, blue: 0.025) : Color.black)
+                    .fill(
+                        isUpdate
+                            ? Color(red: 0.125, green: 0.082, blue: 0.025)
+                            : isScreenControl
+                                ? Color(red: 0.095, green: 0.062, blue: 0.145)
+                                : Color.black
+                    )
                     .overlay {
                         Capsule().strokeBorder(
                             isUpdate
                                 ? Color(red: 1.000, green: 0.650, blue: 0.180)
                                     .opacity(isHighlighted ? 0.65 : 0.32)
+                                : isScreenControl
+                                    ? Color.notchScreenAccent.opacity(isHighlighted ? 0.82 : 0.48)
                                 : Color.white.opacity(isHighlighted ? 0.20 : 0),
                             lineWidth: 1
                         )

@@ -15,10 +15,12 @@ final class UsageScanner {
     private static let longContextUsageKeys = [
         "input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens",
     ]
-    // Bumped to rebuild every cached summary after tightening `token_count`
-    // deduplication and filtering stale UI-only totals. Version 5 already
-    // back-filled models logged after their first usage event.
-    private static let cacheVersion = 7
+    // Version 8 adds privacy-preserving tool-name/day counters used by the
+    // Tool Activity trends.  It is deliberately backward-compatible with
+    // v7: rebuilding a multi-terabyte transcript archive merely to add an
+    // optional presentation field leaves the dashboard blank for far too long.
+    private static let cacheVersion = 8
+    private static let compatibleCacheVersions: Set<Int> = [7, cacheVersion]
 
     init() {
         let home = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
@@ -47,9 +49,12 @@ final class UsageScanner {
 
     private func readCache() -> CacheFile {
         guard let data = try? Data(contentsOf: cachePath),
-              let cache = try? JSONDecoder().decode(CacheFile.self, from: data),
-              cache.version == Self.cacheVersion
+              var cache = try? JSONDecoder().decode(CacheFile.self, from: data),
+              Self.compatibleCacheVersions.contains(cache.version)
         else { return CacheFile(version: Self.cacheVersion, files: [:]) }
+        // Persist the lightweight schema migration on the next regular write;
+        // unchanged entries keep their real token/project summaries intact.
+        cache.version = Self.cacheVersion
         return cache
     }
 
@@ -72,6 +77,8 @@ final class UsageScanner {
         var project: String?
         var toolCallCount = 0
         var filesChangedCount = 0
+        var toolUsage: [String: Int] = [:]
+        var dailyToolUsage: [String: [String: Int]] = [:]
         var activeModel = "unknown"
         var firstKnownModel: String?
         var previousTotalUsage: [String: Int]?
@@ -89,7 +96,8 @@ final class UsageScanner {
                             totals: &totals, usageByModel: &usageByModel,
                             dailyUsageByModel: &dailyUsageByModel,
                             limitsByKind: &limitsByKind, planType: &planType, planAt: &planAt,
-                            project: &project, toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount)
+                            project: &project, toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount,
+                            toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage)
                 }
                 lineStart = index + 1
             }
@@ -100,7 +108,8 @@ final class UsageScanner {
                         totals: &totals, usageByModel: &usageByModel,
                         dailyUsageByModel: &dailyUsageByModel,
                         limitsByKind: &limitsByKind, planType: &planType, planAt: &planAt,
-                        project: &project, toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount)
+                        project: &project, toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount,
+                        toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage)
             }
         }
 
@@ -118,7 +127,8 @@ final class UsageScanner {
         return FileSummary(endedAt: latestAt, usage: totals, usageByModel: usageByModel,
                             dailyUsageByModel: dailyUsageByModel,
                             limitsByKind: limitsByKind, planType: planType, planAt: planAt,
-                            project: project, toolCallCount: toolCallCount, filesChangedCount: filesChangedCount)
+                            project: project, toolCallCount: toolCallCount, filesChangedCount: filesChangedCount,
+                            toolUsage: toolUsage, dailyToolUsage: dailyToolUsage)
     }
 
     /// Byte-level triage ahead of the JSON parser, which is what a cold rebuild
@@ -183,7 +193,8 @@ final class UsageScanner {
         totals: inout [String: Int], usageByModel: inout [String: [String: Int]],
         dailyUsageByModel: inout [String: [String: [String: Int]]],
         limitsByKind: inout [String: LimitSlot], planType: inout String?, planAt: inout String?,
-        project: inout String?, toolCallCount: inout Int, filesChangedCount: inout Int
+        project: inout String?, toolCallCount: inout Int, filesChangedCount: inout Int,
+        toolUsage: inout [String: Int], dailyToolUsage: inout [String: [String: Int]]
     ) {
         let envelope = lineData.count > Self.envelopeBytes ? lineData.prefix(Self.envelopeBytes) : lineData
         guard Self.usefulMarkers.contains(where: { envelope.range(of: $0) != nil }) else {
@@ -207,6 +218,11 @@ final class UsageScanner {
 
         if payloadType == "custom_tool_call" || payloadType == "function_call" {
             toolCallCount += 1
+            let name = ((payload["name"] as? String) ?? (payload["tool_name"] as? String) ?? "other").trimmingCharacters(in: .whitespacesAndNewlines)
+            let toolName = name.isEmpty ? "other" : name
+            let dateKey = UsageAggregation.isoDateOnly(Formatting.parseISODate(latestAt) ?? Date())
+            toolUsage[toolName, default: 0] += 1
+            dailyToolUsage[dateKey, default: [:]][toolName, default: 0] += 1
         }
         if payloadType == "patch_apply_end", let changes = payload["changes"] as? [String: Any] {
             filesChangedCount += changes.count
@@ -341,6 +357,25 @@ final class UsageScanner {
         }
         writeCache(cache)
 
+        return UsageAggregation.buildPayload(
+            cacheFiles: cache.files, prices: prices, priceStatus: priceStatus,
+            defaultPlan: "Codex", normalizeModel: normalizedModel,
+            accountUsage: accountUsage
+        )
+    }
+
+    /// Builds a dashboard payload from the last complete local scan without
+    /// touching any transcript.  This lets the UI show known-real usage while
+    /// `scan` refreshes the handful of session files that are still changing.
+    /// A cache miss stays explicit (`nil`) so a genuinely new installation
+    /// never pretends to have usage data.
+    func cachedPayload(
+        prices: [String: ModelPrice],
+        priceStatus: String,
+        accountUsage: CodexAccountTokenUsage? = nil
+    ) -> UsagePayload? {
+        let cache = readCache()
+        guard !cache.files.isEmpty else { return nil }
         return UsageAggregation.buildPayload(
             cacheFiles: cache.files, prices: prices, priceStatus: priceStatus,
             defaultPlan: "Codex", normalizeModel: normalizedModel,

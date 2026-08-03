@@ -22,6 +22,12 @@ final class FormattingTests: XCTestCase {
         XCTAssertEqual(Formatting.tokenLabel(2_000_000_000), "2.00B")
     }
 
+    func testContextTokenLabelsKeepBothCapsuleValuesCompact() {
+        XCTAssertEqual(Formatting.contextTokenLabel(184_000), "184K")
+        XCTAssertEqual(Formatting.contextTokenLabel(789_000_000), "789M")
+        XCTAssertEqual(Formatting.contextTokenLabel(1_850_000_000), "1.85B")
+    }
+
     func testFourSignificantTokenLabelUsesAdaptiveUnits() {
         XCTAssertEqual(Formatting.fourSignificantTokenLabel(1_303_000_000), "1.303B")
         XCTAssertEqual(Formatting.fourSignificantTokenLabel(1_353_000), "1.353M")
@@ -64,6 +70,46 @@ final class FormattingTests: XCTestCase {
         let label = Formatting.resetLabel(Date().addingTimeInterval(90 * 60).timeIntervalSince1970, lang: .zh)
         XCTAssertTrue(label.hasSuffix("后重置"))
         XCTAssertTrue(label.contains("h") && label.contains("m"))
+    }
+
+    func testCompactRefreshLabelUsesOneRoundedCadenceUnit() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertEqual(
+            Formatting.compactRefreshLabel(now.addingTimeInterval(5 * 86_400).timeIntervalSince1970, lang: .zh, now: now),
+            "5 天后刷新"
+        )
+        XCTAssertEqual(
+            Formatting.compactRefreshLabel(now.addingTimeInterval(90 * 60).timeIntervalSince1970, lang: .zh, now: now),
+            "2 小时后刷新"
+        )
+    }
+
+    func testRefreshRemainingDurationKeepsDayAndHourPrecision() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertEqual(
+            Formatting.refreshRemainingDurationLabel(
+                now.addingTimeInterval((5 * 86_400) + (3 * 3_600)).timeIntervalSince1970,
+                lang: .zh,
+                now: now
+            ),
+            "5 天 3 小时"
+        )
+        XCTAssertEqual(
+            Formatting.refreshRemainingDurationLabel(
+                now.addingTimeInterval(90 * 60).timeIntervalSince1970,
+                lang: .zh,
+                now: now
+            ),
+            "2 小时"
+        )
+        XCTAssertEqual(
+            Formatting.refreshRemainingDurationLabel(
+                now.addingTimeInterval((2 * 86_400) + (6 * 3_600)).timeIntervalSince1970,
+                lang: .en,
+                now: now
+            ),
+            "2d 6h"
+        )
     }
 
     func testHoursAndMinutesSplitsElapsedSecondsAndClampsNegatives() {

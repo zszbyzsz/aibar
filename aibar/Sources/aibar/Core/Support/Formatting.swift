@@ -30,6 +30,40 @@ enum Formatting {
         return "\(value)"
     }
 
+    /// Three-significant-digit token label for the activity capsule's
+    /// current/total context pair (`184K / 789M`). It is intentionally more
+    /// compact than the dashboard formatter because both values must remain
+    /// readable inside a single 32pt-high pill.
+    static func contextTokenLabel(_ value: Int) -> String {
+        let nonnegative = Double(max(0, value))
+        let scaled: Double
+        let suffix: String
+
+        if nonnegative >= 1_000_000_000 {
+            scaled = nonnegative / 1_000_000_000
+            suffix = "B"
+        } else if nonnegative >= 1_000_000 {
+            scaled = nonnegative / 1_000_000
+            suffix = "M"
+        } else if nonnegative >= 1_000 {
+            scaled = nonnegative / 1_000
+            suffix = "K"
+        } else {
+            return "\(Int(nonnegative))"
+        }
+
+        let format = scaled >= 100 ? "%.0f" : (scaled >= 10 ? "%.1f" : "%.2f")
+        return String(format: format, scaled) + suffix
+    }
+
+    static func groupedCount(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = 0
+        return formatter.string(from: NSNumber(value: max(0, value))) ?? "0"
+    }
+
     /// Compact token value with exactly four significant digits. The unit is
     /// selected independently of the precision, so large daily averages stay
     /// short while retaining useful differences (`1.303B`, `1.353M`, etc.).
@@ -88,6 +122,49 @@ enum Formatting {
             return L.resetsInHoursMinutes(lang, hours: minutes / 60, minutes: minutes % 60)
         }
         return L.resetsInMinutes(lang, minutes: minutes)
+    }
+
+    /// Deliberately coarser than `resetLabel`: the compact quota column only
+    /// needs a single readable cadence value beside its Daily/Weekly title.
+    static func compactRefreshLabel(
+        _ resetsAt: Double?,
+        lang: AppLanguage,
+        now: Date = Date()
+    ) -> String {
+        guard let resetsAt else { return L.noLocalRecord(lang) }
+        let remaining = Date(timeIntervalSince1970: resetsAt).timeIntervalSince(now)
+        if remaining <= 0 { return L.waitingForSync(lang) }
+
+        let minutes = max(1, Int((remaining / 60).rounded(.up)))
+        if minutes >= 1440 {
+            return L.refreshesInDays(lang, days: Int((Double(minutes) / 1440).rounded(.up)))
+        }
+        if minutes >= 60 {
+            return L.refreshesInHours(lang, hours: Int((Double(minutes) / 60).rounded(.up)))
+        }
+        return L.refreshesInMinutes(lang, minutes: minutes)
+    }
+
+    /// A larger, two-line quota readout puts the "remaining" label in the
+    /// first line and this exact duration in the second. Week-long windows
+    /// retain both day and hour precision; shorter windows stay focused on
+    /// hours instead of introducing a noisy zero-day prefix.
+    static func refreshRemainingDurationLabel(
+        _ resetsAt: Double?,
+        lang: AppLanguage,
+        now: Date = Date()
+    ) -> String {
+        guard let resetsAt else { return L.noLocalRecord(lang) }
+        let remaining = Date(timeIntervalSince1970: resetsAt).timeIntervalSince(now)
+        if remaining <= 0 { return L.waitingForSync(lang) }
+
+        let totalHours = max(1, Int((remaining / 3_600).rounded(.up)))
+        let days = totalHours / 24
+        let hours = totalHours % 24
+        if days > 0 {
+            return L.remainingDaysHours(lang, days: days, hours: hours)
+        }
+        return L.remainingHours(lang, hours: totalHours)
     }
 
     /// The date itself is encoded by the reset's position in the heatmap; its

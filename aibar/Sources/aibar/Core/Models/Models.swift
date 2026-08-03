@@ -38,7 +38,7 @@ struct LimitSlot: Codable {
     var limitName: String? = nil
 }
 
-struct FileSummary: Codable {
+struct FileSummary {
     var endedAt: String
     var usage: [String: Int]
     var usageByModel: [String: [String: Int]]
@@ -52,6 +52,68 @@ struct FileSummary: Codable {
     var project: String?
     var toolCallCount: Int = 0
     var filesChangedCount: Int = 0
+    /// Tool calls grouped by their declared tool name. Names only are retained
+    /// — never tool inputs, outputs, commands, or file paths.
+    var toolUsage: [String: Int] = [:]
+    /// The same tool counts split by event day, so the dashboard can render a
+    /// real 30-day trend per tool without reopening session transcripts.
+    var dailyToolUsage: [String: [String: Int]] = [:]
+}
+
+/// Cache records predate the per-tool counters above.  These fields are
+/// additive: an older summary still contains all token, project, and quota
+/// data required by the dashboard, so decoding it must not force a complete
+/// re-parse of the user's transcript history just to obtain an empty tool map.
+extension FileSummary: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case endedAt
+        case usage
+        case usageByModel
+        case dailyUsageByModel
+        case limitsByKind
+        case planType
+        case planAt
+        case project
+        case toolCallCount
+        case filesChangedCount
+        case toolUsage
+        case dailyToolUsage
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        endedAt = try container.decode(String.self, forKey: .endedAt)
+        usage = try container.decode([String: Int].self, forKey: .usage)
+        usageByModel = try container.decode([String: [String: Int]].self, forKey: .usageByModel)
+        dailyUsageByModel = try container.decodeIfPresent(
+            [String: [String: [String: Int]]].self,
+            forKey: .dailyUsageByModel
+        ) ?? [:]
+        limitsByKind = try container.decodeIfPresent([String: LimitSlot].self, forKey: .limitsByKind) ?? [:]
+        planType = try container.decodeIfPresent(String.self, forKey: .planType)
+        planAt = try container.decodeIfPresent(String.self, forKey: .planAt)
+        project = try container.decodeIfPresent(String.self, forKey: .project)
+        toolCallCount = try container.decodeIfPresent(Int.self, forKey: .toolCallCount) ?? 0
+        filesChangedCount = try container.decodeIfPresent(Int.self, forKey: .filesChangedCount) ?? 0
+        toolUsage = try container.decodeIfPresent([String: Int].self, forKey: .toolUsage) ?? [:]
+        dailyToolUsage = try container.decodeIfPresent([String: [String: Int]].self, forKey: .dailyToolUsage) ?? [:]
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(endedAt, forKey: .endedAt)
+        try container.encode(usage, forKey: .usage)
+        try container.encode(usageByModel, forKey: .usageByModel)
+        try container.encode(dailyUsageByModel, forKey: .dailyUsageByModel)
+        try container.encode(limitsByKind, forKey: .limitsByKind)
+        try container.encodeIfPresent(planType, forKey: .planType)
+        try container.encodeIfPresent(planAt, forKey: .planAt)
+        try container.encodeIfPresent(project, forKey: .project)
+        try container.encode(toolCallCount, forKey: .toolCallCount)
+        try container.encode(filesChangedCount, forKey: .filesChangedCount)
+        try container.encode(toolUsage, forKey: .toolUsage)
+        try container.encode(dailyToolUsage, forKey: .dailyToolUsage)
+    }
 }
 
 struct CachedEntry: Codable {
@@ -114,6 +176,10 @@ struct ModelUsage: Identifiable {
     var inputCost: Double = 0
     var cachedCost: Double = 0
     var outputCost: Double = 0
+    /// Token totals for the model's 30-day trend, ordered oldest to newest.
+    /// Keeping this alongside the monthly rollup lets the compact model row
+    /// show a real trend without rescanning transcripts in the view layer.
+    var dailyTokens: [Int] = []
 }
 
 struct DailyPoint: Identifiable {
@@ -134,6 +200,9 @@ struct ProjectUsage: Identifiable {
     /// from most to least used. Keeping this alongside the project total lets
     /// the dashboard explain a project's spend without needing another scan.
     var models: [ProjectModelUsage] = []
+    /// Token totals for the project's 90-day trend, ordered oldest to newest.
+    /// The list mirrors the "Top Projects (90d)" window shown by the dashboard.
+    var dailyTokens: [Int] = []
 }
 
 struct ProjectModelUsage: Identifiable {
@@ -143,14 +212,29 @@ struct ProjectModelUsage: Identifiable {
     var apiEquivalentCost: Double = 0
 }
 
-/// A deliberately narrow, privacy-preserving view of a recently active Codex
-/// thread. It contains only thread metadata and the final event kind — never a
-/// prompt, response, command, file path, or tool input/output.
+/// One named tool's 30-day activity. This is intentionally call-count based:
+/// tools have no common token-equivalent unit, while calls are a faithful,
+/// comparable measure across shell, file, browser, and MCP tools.
+struct ToolUsage: Identifiable {
+    var id: String { name }
+    var name: String
+    var calls: Int
+    var dailyCalls: [Int] = []
+}
+
+/// A deliberately narrow view of a recently active Codex conversation. It
+/// retains the conversation's display title and, while a persisted Goal is
+/// active, that Goal's objective. Prompt/response bodies, commands, file paths,
+/// screen content, and tool input/output are never retained.
 struct ProjectActivity: Equatable {
-    enum Phase {
+    enum Phase: Equatable {
         case working
         case thinking
         case usingTool
+        /// Codex is interacting with a visible desktop/screen surface. This
+        /// is kept separate from ordinary tool calls so the activity capsule
+        /// can make screen control immediately recognizable at a glance.
+        case usingScreen
         case editing
     }
 
@@ -163,6 +247,17 @@ struct ProjectActivity: Equatable {
     }
 
     var project: String
+    /// Codex's stable title for this exact root conversation (`threads.title`).
+    /// This distinguishes simultaneous conversations opened in the same cwd.
+    var conversationTitle: String
+    /// The latest active persisted Goal objective, if the conversation is
+    /// currently running as a Goal rather than as an ordinary turn.
+    var goalObjective: String?
+    /// The label shown in the capsule. An active Goal is more specific than
+    /// the conversation title; the project name is only a final fallback.
+    var displayTitle: String {
+        goalObjective ?? (conversationTitle.isEmpty ? project : conversationTitle)
+    }
     var model: String?
     var phase: Phase
     var lastActivityAt: Date
@@ -171,7 +266,12 @@ struct ProjectActivity: Equatable {
     /// event rather than the thread's original database creation time.
     var startedAt: Date
     var timingScope: TimingScope = .currentTurn
-    var sessionTokens: Int
+    /// Tokens currently carried into the next model call, sourced from the
+    /// latest `last_token_usage.total_tokens` rollout counter.
+    var currentContextTokens: Int
+    /// Cumulative tokens consumed by this conversation across all turns,
+    /// sourced from `total_token_usage.total_tokens` in the same event.
+    var conversationTokens: Int
     var sandboxPolicy: String
     var approvalMode: String
     /// The thread's own database id (`threads.id`) — not shown anywhere, but
@@ -294,6 +394,7 @@ struct UsagePayload {
     var monthCachedTokens: Int = 0
     var monthToolCalls: Int = 0
     var monthFilesChanged: Int = 0
+    var tools: [ToolUsage] = []
     var monthUnpricedModels: [String] = []
     var models: [ModelUsage] = []
     var daily: [DailyPoint] = []

@@ -153,9 +153,14 @@ final class UsageStore: ObservableObject {
             return FileFingerprint(modifiedAt: modifiedAt, size: size)
         }
 
+        // Both paths can coexist after a Codex migration.  Use the same
+        // activity-aware resolver as the live capsule so the visible dashboard
+        // refresh follows the database Codex is actually writing.
+        let database = CodexActivityMonitor.stateDatabaseURL(in: codexHome)
+
         return CodexStateFingerprint(
-            database: fingerprint(for: codexHome.appendingPathComponent("state_5.sqlite")),
-            writeAheadLog: fingerprint(for: codexHome.appendingPathComponent("state_5.sqlite-wal"))
+            database: fingerprint(for: database),
+            writeAheadLog: fingerprint(for: database.appendingPathExtension("wal"))
         )
     }
 
@@ -174,6 +179,10 @@ final class UsageStore: ObservableObject {
             payload = Self.demoPayload()
             return
         }
+        // Startup and preview-open can request a refresh in the same run loop.
+        // Coalescing them prevents two concurrent parsers from rereading the
+        // same large local transcript archive and delaying the first payload.
+        guard !refreshing else { return }
         refreshing = true
         defer { refreshing = false }
 
@@ -183,6 +192,11 @@ final class UsageStore: ObservableObject {
             if eagerly {
                 async let refreshedPrices = codexPricing.prices()
                 let immediatePrices = await codexPricing.cachedOrFallbackPrices()
+                await publishCachedCodexPayload(
+                    prices: immediatePrices.models,
+                    status: immediatePrices.status,
+                    provider: currentProvider
+                )
                 var immediateResult = await codexPayload(
                     prices: immediatePrices.models,
                     status: immediatePrices.status
@@ -208,6 +222,11 @@ final class UsageStore: ObservableObject {
             }
 
             let (prices, status) = await codexPricing.prices()
+            await publishCachedCodexPayload(
+                prices: prices,
+                status: status,
+                provider: currentProvider
+            )
             var result = await codexPayload(prices: prices, status: status)
             result.activeProject = codexActivityMonitor.currentActivity()
             guard provider == currentProvider else { return }
@@ -259,6 +278,37 @@ final class UsageStore: ObservableObject {
         result.0.subscriptionActiveUntil = result.1?.activeUntil
         result.0.rateLimitResetCredits = codexResetCredits
         return result.0
+    }
+
+    /// Publish a complete cached snapshot before any changing session file is
+    /// reparsed.  It uses the same account metadata, subscription, pricing,
+    /// and activity decoration as the fresh scan below, so this is a real
+    /// dashboard state rather than a temporary placeholder.
+    private func publishCachedCodexPayload(
+        prices: [String: ModelPrice],
+        status: String,
+        provider currentProvider: UsageProvider
+    ) async {
+        let scanner = codexScanner
+        let accountUsage = codexAccountTokenUsage
+        let cached = await Task.detached(priority: .userInitiated) {
+            (
+                scanner.cachedPayload(
+                    prices: prices,
+                    priceStatus: status,
+                    accountUsage: accountUsage
+                ),
+                SubscriptionInfo.read()
+            )
+        }.value
+        guard var result = cached.0 else { return }
+        result.pricingRates = prices
+        result.subscriptionPlan = cached.1?.planType
+        result.subscriptionActiveUntil = cached.1?.activeUntil
+        result.rateLimitResetCredits = codexResetCredits
+        result.activeProject = codexActivityMonitor.currentActivity()
+        guard provider == currentProvider else { return }
+        payload = result
     }
 
     /// Hits the live `/api/oauth/usage` endpoint — call this once per actual
@@ -339,6 +389,34 @@ final class UsageStore: ObservableObject {
                 cost: Double(tokens) / 1_000_000 * 0.78
             )
         }
+        let recentMonthTokens = Array(daily.suffix(30)).map(\.tokens)
+        let recentProjectTokens = Array(daily.suffix(90)).map(\.tokens)
+        let modelTrendShares = [
+            42_000_000_000.0 / 67_260_000_000.0,
+            17_000_000_000.0 / 67_260_000_000.0,
+            8_260_000_000.0 / 67_260_000_000.0,
+        ]
+        let modelTrends = modelTrendShares.map { share in
+            recentMonthTokens.map { Int((Double($0) * share).rounded()) }
+        }
+        let projectTrendTotal = 61_800_000_000.0
+        let projectTrendShares = [
+            31_600_000_000.0 / projectTrendTotal,
+            20_400_000_000.0 / projectTrendTotal,
+            9_800_000_000.0 / projectTrendTotal,
+        ]
+        let projectTrends = projectTrendShares.map { share in
+            recentProjectTokens.map { Int((Double($0) * share).rounded()) }
+        }
+        let toolCallBands = recentMonthTokens.enumerated().map { index, tokens in
+            max(0, Int(Double(tokens) / 180_000_000) + (index % 4))
+        }
+        let demoTools = [
+            ToolUsage(name: "shell", calls: 186, dailyCalls: toolCallBands.map { $0 + 2 }),
+            ToolUsage(name: "apply_patch", calls: 121, dailyCalls: toolCallBands.map { max(0, $0 - 1) }),
+            ToolUsage(name: "file_search", calls: 103, dailyCalls: toolCallBands.map { max(0, $0 / 2) }),
+            ToolUsage(name: "web_search", calls: 72, dailyCalls: toolCallBands.map { $0 % 5 }),
+        ]
         let resetBase = now.timeIntervalSince1970
         return UsagePayload(
             generatedAt: now,
@@ -356,32 +434,37 @@ final class UsageStore: ObservableObject {
             monthCachedTokens: 18_000_000_000,
             monthToolCalls: 482,
             monthFilesChanged: 97,
+            tools: demoTools,
             monthUnpricedModels: [],
             models: [
-                ModelUsage(model: "gpt-5.6-sol", tokens: 42_000_000_000, apiEquivalentCost: 32_100.00, inputCost: 12_840.0, cachedCost: 3_210.0, outputCost: 16_050.0),
-                ModelUsage(model: "gpt-5.6-terra", tokens: 17_000_000_000, apiEquivalentCost: 14_250.00, inputCost: 5_700.0, cachedCost: 1_425.0, outputCost: 7_125.0),
-                ModelUsage(model: "gpt-5.5", tokens: 8_260_000_000, apiEquivalentCost: 6_112.80, inputCost: 2_445.12, cachedCost: 611.28, outputCost: 3_056.40),
+                ModelUsage(model: "gpt-5.6-sol", tokens: 42_000_000_000, apiEquivalentCost: 32_100.00, inputCost: 12_840.0, cachedCost: 3_210.0, outputCost: 16_050.0, dailyTokens: modelTrends[0]),
+                ModelUsage(model: "gpt-5.6-terra", tokens: 17_000_000_000, apiEquivalentCost: 14_250.00, inputCost: 5_700.0, cachedCost: 1_425.0, outputCost: 7_125.0, dailyTokens: modelTrends[1]),
+                ModelUsage(model: "gpt-5.5", tokens: 8_260_000_000, apiEquivalentCost: 6_112.80, inputCost: 2_445.12, cachedCost: 611.28, outputCost: 3_056.40, dailyTokens: modelTrends[2]),
             ],
             daily: daily,
             topProjects: [
                 ProjectUsage(name: "studio-app", tokens: 31_600_000_000, apiEquivalentCost: 25_600.00, models: [
                     ProjectModelUsage(model: "gpt-5.6-sol", tokens: 24_000_000_000, apiEquivalentCost: 19_200.00),
                     ProjectModelUsage(model: "gpt-5.6-terra", tokens: 7_600_000_000, apiEquivalentCost: 6_400.00),
-                ]),
+                ], dailyTokens: projectTrends[0]),
                 ProjectUsage(name: "design-system", tokens: 20_400_000_000, apiEquivalentCost: 16_100.00, models: [
                     ProjectModelUsage(model: "gpt-5.6-terra", tokens: 13_000_000_000, apiEquivalentCost: 10_400.00),
                     ProjectModelUsage(model: "gpt-5.6-sol", tokens: 7_400_000_000, apiEquivalentCost: 5_700.00),
-                ]),
+                ], dailyTokens: projectTrends[1]),
                 ProjectUsage(name: "swift-lab", tokens: 9_800_000_000, apiEquivalentCost: 7_800.00, models: [
                     ProjectModelUsage(model: "gpt-5.5", tokens: 7_800_000_000, apiEquivalentCost: 6_200.00),
                     ProjectModelUsage(model: "gpt-5.6-terra", tokens: 2_000_000_000, apiEquivalentCost: 1_600.00),
-                ]),
+                ], dailyTokens: projectTrends[2]),
             ],
             activeProject: ProjectActivity(
-                project: "studio-app", model: "gpt-5.6-sol", phase: .editing,
+                project: "studio-app",
+                conversationTitle: "Refine studio workspace",
+                goalObjective: "Polish the workspace activity experience",
+                model: "gpt-5.6-sol", phase: .usingScreen,
                 lastActivityAt: now, startedAt: now.addingTimeInterval(-643),
                 timingScope: .continuousGoal,
-                sessionTokens: 1_850_000_000,
+                currentContextTokens: 184_000,
+                conversationTokens: 789_000_000,
                 sandboxPolicy: "workspace-write", approvalMode: "on-request",
                 threadID: "preview-thread"
             ),

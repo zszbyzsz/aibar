@@ -112,11 +112,14 @@ final class ActivityCapsulePolicyTests: XCTestCase {
             threadID: key,
             display: .active(ProjectActivity(
                 project: key,
+                conversationTitle: key,
+                goalObjective: nil,
                 model: nil,
                 phase: .working,
                 lastActivityAt: now,
                 startedAt: now,
-                sessionTokens: 0,
+                currentContextTokens: 0,
+                conversationTokens: 0,
                 sandboxPolicy: "",
                 approvalMode: "",
                 threadID: key

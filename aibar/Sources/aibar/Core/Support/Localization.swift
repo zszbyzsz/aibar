@@ -22,15 +22,25 @@ enum L {
             ? "\(days)天 · token 深浅 · 今天有边框"
             : "\(days)d · token intensity · today outlined"
     }
+    static func heatmapMarkerHover(
+        _ lang: AppLanguage,
+        date: String,
+        markers: String
+    ) -> String {
+        lang == .zh ? "\(date)：\(markers)" : "\(date): \(markers)"
+    }
     static func heatmapResetHover(
         _ lang: AppLanguage,
         date: String,
         count: Int,
-        times: String
+        times: String,
+        additionalMarkers: [String] = []
     ) -> String {
-        lang == .zh
+        let resetText = lang == .zh
             ? "\(date)：\(count) 次 reset 到期 · \(times)"
             : "\(date): \(count) reset \(count == 1 ? "expires" : "expire") · \(times)"
+        guard !additionalMarkers.isEmpty else { return resetText }
+        return resetText + " · " + additionalMarkers.joined(separator: " · ")
     }
     static func resetExpiryLegend(_ lang: AppLanguage) -> String {
         lang == .zh ? "重置 >10天" : "Reset >10d"
@@ -41,6 +51,12 @@ enum L {
     static func resetExpiryWithinDays(_ lang: AppLanguage, days: Int) -> String {
         if days == 0 { return lang == .zh ? "今天到期" : "Expires today" }
         return lang == .zh ? "\(days) 天内到期" : "Expires in \(days)d"
+    }
+    static func subscriptionEndLegend(_ lang: AppLanguage) -> String {
+        lang == .zh ? "结束" : "End"
+    }
+    static func weeklyRefreshLegend(_ lang: AppLanguage) -> String {
+        lang == .zh ? "周刷新" : "Weekly reset"
     }
     static func less(_ lang: AppLanguage) -> String { lang == .zh ? "少" : "Less" }
     static func more(_ lang: AppLanguage) -> String { lang == .zh ? "多" : "More" }
@@ -54,10 +70,10 @@ enum L {
     static func legendCached(_ lang: AppLanguage) -> String { lang == .zh ? "缓存" : "Cached" }
     static func legendOutput(_ lang: AppLanguage) -> String { lang == .zh ? "输出" : "Output" }
     static func hoverForBreakdown(_ lang: AppLanguage) -> String {
-        lang == .zh ? "悬停查看明细" : "Hover for details"
+        lang == .zh ? "悬停查看" : "Hover"
     }
     static func unpricedUsageLabel(_ lang: AppLanguage) -> String {
-        lang == .zh ? "其他未定价用量" : "Other unpriced usage"
+        lang == .zh ? "未定价" : "Unpriced"
     }
 
     static func liveOfficialPrice(_ lang: AppLanguage) -> String {
@@ -68,18 +84,18 @@ enum L {
     }
     static func per1M(_ lang: AppLanguage) -> String { lang == .zh ? "· 每 1M" : "· per 1M" }
     static func noOfficialPriceMapped(_ lang: AppLanguage) -> String {
-        lang == .zh ? "未映射官方价格" : "No official price mapped"
+        lang == .zh ? "暂无费率" : "No rate"
     }
     static func unpriced(_ lang: AppLanguage) -> String { lang == .zh ? "未定价" : "Unpriced" }
 
     static func noProjectData(_ lang: AppLanguage) -> String {
-        lang == .zh ? "暂无项目路径数据" : "No project path data yet"
+        lang == .zh ? "暂无项目" : "No projects"
     }
     static func projectModelBreakdownTitle(_ lang: AppLanguage) -> String {
-        lang == .zh ? "模型占比" : "Model share"
+        lang == .zh ? "模型" : "Models"
     }
     static func unattributedProject(_ lang: AppLanguage) -> String {
-        lang == .zh ? "未归属（仅账号数据）" : "Unattributed (account only)"
+        lang == .zh ? "未归属" : "Unattributed"
     }
     static func projectModelBreakdownHint(_ lang: AppLanguage) -> String {
         lang == .zh ? "点击查看模型 token 占比" : "Click to view model token shares"
@@ -91,17 +107,42 @@ enum L {
     static func projectUsageAccessibilityLabel(_ lang: AppLanguage, project: String, tokens: String) -> String {
         lang == .zh ? "项目 \(project)，\(tokens) token" : "Project \(project), \(tokens) tokens"
     }
+    static func modelTokenTrendHint(_ lang: AppLanguage) -> String {
+        lang == .zh ? "近 30 天模型 token 趋势" : "Model token trend over the last 30 days"
+    }
+    static func projectTokenTrendHint(_ lang: AppLanguage) -> String {
+        lang == .zh ? "近 90 天项目 token 趋势" : "Project token trend over the last 90 days"
+    }
+    static func tokenTrendAccessibilityLabel(_ lang: AppLanguage) -> String {
+        lang == .zh ? "token 趋势图" : "Token trend chart"
+    }
 
     static func weeklyLabel(_ lang: AppLanguage, isMonthly: Bool) -> String {
         if lang == .zh { return isMonthly ? "每月" : "每周" }
         return isMonthly ? "Monthly" : "Weekly"
     }
+    static func dailyLabel(_ lang: AppLanguage) -> String { lang == .zh ? "每天" : "Daily" }
+    static func refreshesInDays(_ lang: AppLanguage, days: Int) -> String {
+        lang == .zh ? "\(days) 天后刷新" : "Refreshes in \(days)d"
+    }
+    static func refreshesInHours(_ lang: AppLanguage, hours: Int) -> String {
+        lang == .zh ? "\(hours) 小时后刷新" : "Refreshes in \(hours)h"
+    }
+    static func refreshesInMinutes(_ lang: AppLanguage, minutes: Int) -> String {
+        lang == .zh ? "\(minutes) 分钟后刷新" : "Refreshes in \(minutes)m"
+    }
+    static func remainingDaysHours(_ lang: AppLanguage, days: Int, hours: Int) -> String {
+        lang == .zh ? "\(days) 天 \(hours) 小时" : "\(days)d \(hours)h"
+    }
+    static func remainingHours(_ lang: AppLanguage, hours: Int) -> String {
+        lang == .zh ? "\(hours) 小时" : "\(hours)h"
+    }
     static func syncing(_ lang: AppLanguage) -> String { lang == .zh ? "同步中…" : "Syncing…" }
     static func planSessions(_ lang: AppLanguage, plan: String, count: Int) -> String {
-        lang == .zh ? "\(plan) · \(count) 个本地会话" : "\(plan) · \(count) local sessions"
+        lang == .zh ? "\(plan) · \(count) 个会话" : "\(plan) · \(count) sessions"
     }
     static func localSessionsCount(_ lang: AppLanguage, count: Int) -> String {
-        lang == .zh ? "\(count) 个本地会话" : "\(count) local sessions"
+        lang == .zh ? "\(count) 个会话" : "\(count) sessions"
     }
     static func subscriptionBadge(_ lang: AppLanguage, date: String, daysLeft: Int?) -> String {
         let suffix: String
@@ -119,15 +160,15 @@ enum L {
     }
 
     static func sessionTitle(_ lang: AppLanguage) -> String { lang == .zh ? "会话" : "Session" }
-    static func usageOverviewTitle(_ lang: AppLanguage) -> String { lang == .zh ? "用量总览" : "Usage Overview" }
+    static func usageOverviewTitle(_ lang: AppLanguage) -> String { lang == .zh ? "用量" : "Usage" }
     static func modelBreakdownTitle(_ lang: AppLanguage) -> String {
-        lang == .zh ? "按模型统计" : "By Model"
+        lang == .zh ? "模型" : "Models"
     }
     static func topProjectsTitle(_ lang: AppLanguage) -> String {
-        lang == .zh ? "最活跃项目（90 天）" : "Top Projects (90d)"
+        lang == .zh ? "项目" : "Projects"
     }
-    static func activityTitle(_ lang: AppLanguage, project: String) -> String {
-        lang == .zh ? "正在处理 · \(project)" : "Working · \(project)"
+    static func activityTitle(_ lang: AppLanguage, title: String) -> String {
+        lang == .zh ? "正在处理 · \(title)" : "Working · \(title)"
     }
     static func activityAge(
         _ lang: AppLanguage,
@@ -151,14 +192,34 @@ enum L {
         case .working: return lang == .zh ? "处理中" : "Working"
         case .thinking: return lang == .zh ? "正在分析" : "Analyzing"
         case .usingTool: return lang == .zh ? "正在执行工具" : "Using tools"
+        case .usingScreen: return lang == .zh ? "正在操作屏幕" : "Controlling screen"
         case .editing: return lang == .zh ? "正在修改文件" : "Editing files"
         }
     }
     static func activityTokens(_ lang: AppLanguage, tokens: String) -> String {
         lang == .zh ? "会话 \(tokens)" : "Session \(tokens)"
     }
-    static func activityAccessibilityLabel(_ lang: AppLanguage, project: String, phase: ProjectActivity.Phase) -> String {
-        lang == .zh ? "项目 \(project)，\(activityPhase(lang, phase: phase))" : "Project \(project), \(activityPhase(lang, phase: phase))"
+    static func activityContextHint(_ lang: AppLanguage) -> String {
+        lang == .zh ? "当前上下文 / 对话累计" : "Current context / conversation total"
+    }
+    static func activityContextAccessibility(
+        _ lang: AppLanguage,
+        current: String,
+        total: String
+    ) -> String {
+        lang == .zh
+            ? "当前上下文 \(current)，对话累计 \(total)"
+            : "Current context \(current), conversation total \(total)"
+    }
+    static func activityAccessibilityLabel(
+        _ lang: AppLanguage,
+        title: String,
+        project: String,
+        phase: ProjectActivity.Phase
+    ) -> String {
+        lang == .zh
+            ? "对话 \(title)，项目 \(project)，\(activityPhase(lang, phase: phase))"
+            : "Conversation \(title), project \(project), \(activityPhase(lang, phase: phase))"
     }
     static func activityOutcomeLabel(_ lang: AppLanguage, outcome: ActivityOutcome) -> String {
         switch outcome {
@@ -211,28 +272,55 @@ enum L {
         lang == .zh ? "近 \(days) 天峰值 \(money)" : "\(days)d peak \(money)"
     }
     static func averageDailyTokens30d(_ lang: AppLanguage, tokens: String) -> String {
-        lang == .zh ? "30 天日均 \(tokens) token" : "30d daily avg \(tokens) tokens"
+        lang == .zh ? "30 天日均 \(tokens)" : "30d avg \(tokens)"
     }
-    static func pricingSynced(_ lang: AppLanguage) -> String { lang == .zh ? "价格已同步" : "Pricing synced" }
+    static func pricingSynced(_ lang: AppLanguage) -> String { lang == .zh ? "实时费率" : "Live rates" }
     static func pricingPartial(_ lang: AppLanguage) -> String {
-        lang == .zh ? "部分价格使用离线缓存" : "Some prices use offline fallback"
+        lang == .zh ? "混合费率" : "Mixed rates"
     }
     static func pricingOffline(_ lang: AppLanguage) -> String {
-        lang == .zh ? "使用离线缓存价格" : "Using cached offline pricing"
+        lang == .zh ? "缓存费率" : "Cached rates"
     }
     static func toolCallsAndEdits(_ lang: AppLanguage, calls: Int, edits: Int) -> String {
         lang == .zh ? "\(calls) 次调用 · \(edits) 次修改" : "\(calls) tool calls · \(edits) file edits"
     }
+    static func toolActivityTitle(_ lang: AppLanguage) -> String {
+        lang == .zh ? "工具" : "Tools"
+    }
+    static func toolCallsTitle(_ lang: AppLanguage) -> String {
+        lang == .zh ? "调用" : "Calls"
+    }
+    static func filesChangedTitle(_ lang: AppLanguage) -> String {
+        lang == .zh ? "修改" : "Edits"
+    }
+    static func last30Days(_ lang: AppLanguage) -> String {
+        lang == .zh ? "30 天" : "30d"
+    }
+    static func noToolActivity(_ lang: AppLanguage) -> String {
+        lang == .zh ? "暂无按工具的使用明细" : "No per-tool activity captured yet"
+    }
+    static func activityFlowTitle(_ lang: AppLanguage) -> String {
+        lang == .zh ? "流程" : "Flow"
+    }
+    static func activityFlowSession(_ lang: AppLanguage) -> String {
+        lang == .zh ? "会话" : "Session"
+    }
+    static func activityFlowTool(_ lang: AppLanguage) -> String {
+        lang == .zh ? "工具" : "Tool"
+    }
+    static func activityFlowFiles(_ lang: AppLanguage) -> String {
+        lang == .zh ? "文件" : "Files"
+    }
 
     static func todayCost(_ lang: AppLanguage) -> String {
-        lang == .zh ? "今日 API 等价费用" : "Today's API-equivalent cost"
+        lang == .zh ? "今日费用" : "Today"
     }
     static func monthCost(_ lang: AppLanguage) -> String {
-        lang == .zh ? "30 天 API 等价费用" : "30d API-equivalent cost"
+        lang == .zh ? "30 天费用" : "30d Cost"
     }
-    static func monthTokens(_ lang: AppLanguage) -> String { lang == .zh ? "30 天 token" : "30d tokens" }
+    static func monthTokens(_ lang: AppLanguage) -> String { lang == .zh ? "30 天 Token" : "30d Tokens" }
     static func latestSessionTokens(_ lang: AppLanguage) -> String {
-        lang == .zh ? "最近会话 token" : "Latest session tokens"
+        lang == .zh ? "最近会话" : "Last Session"
     }
 
     static func footnotePriced(_ lang: AppLanguage) -> String {

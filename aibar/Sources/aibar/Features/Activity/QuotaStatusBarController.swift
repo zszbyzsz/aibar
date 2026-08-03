@@ -34,6 +34,12 @@ final class QuotaStatusBarController: NSObject {
     /// seam without making the readouts feel detached from the notch.
     private static let notchInset: CGFloat = 10
     private static let fallbackSize = CGSize(width: 170, height: 34)
+    /// Side readouts live inside the menu-bar safe area. One step above the
+    /// normal status-window level keeps them from being painted underneath the
+    /// system menu-bar surface, while remaining far below alerts and menus.
+    private static let readoutLevel = NSWindow.Level(
+        rawValue: NSWindow.Level.statusBar.rawValue + 1
+    )
 
     init(
         store: UsageStore,
@@ -51,6 +57,8 @@ final class QuotaStatusBarController: NSObject {
         cameraBridgePanel.level = NSWindow.Level(
             rawValue: NSWindow.Level.statusBar.rawValue - 1
         )
+        leftPanel.level = Self.readoutLevel
+        rightPanel.level = Self.readoutLevel
         let bridgeView = NSView()
         bridgeView.wantsLayer = true
         bridgeView.layer?.backgroundColor = NSColor.black.cgColor
@@ -135,9 +143,10 @@ final class QuotaStatusBarController: NSObject {
         }
     }
 
-    /// A quota that Codex did not provide should take up no space at all. In
-    /// particular, newer Pro snapshots may contain only the weekly window and
-    /// omit the five-hour one altogether.
+    /// Keep both notch wings visible whenever the readouts are enabled. Codex
+    /// sometimes returns only one of the two windows; replacing the absent
+    /// value with a muted em dash is clearer than making the entire side look
+    /// broken or causing the wings to jump around between refreshes.
     private func updatePanelVisibility() {
         if isPresentingActivity, !isScreenshotSuppressed {
             hideReadouts(keepingTracking: true)
@@ -150,21 +159,18 @@ final class QuotaStatusBarController: NSObject {
             return
         }
         showCameraBridgeIfAvailable()
-        update(panel: leftPanel, hasQuota: store.payload.weekly?.usedPercent != nil)
-        update(panel: rightPanel, hasQuota: store.payload.session?.usedPercent != nil)
+        show(panel: leftPanel)
+        show(panel: rightPanel)
     }
 
-    private func update(panel: NSPanel, hasQuota: Bool) {
-        if hasQuota {
-            panel.alphaValue = 1
-            panel.orderFrontRegardless()
-        } else {
-            panel.orderOut(nil)
-        }
+    private func show(panel: NSPanel) {
+        panel.alphaValue = 1
+        panel.orderFrontRegardless()
     }
 
     @objc private func screenParametersChanged() {
         reposition()
+        updatePanelVisibility()
     }
 
     private func reposition() {
@@ -186,8 +192,7 @@ final class QuotaStatusBarController: NSObject {
 
     private func showCameraBridgeIfAvailable() {
         guard let screen = NSScreen.main ?? NSScreen.screens.first,
-              let bridgeFrame = NotchGeometry.cameraBridgeFrame(on: screen, fallbackSize: Self.fallbackSize),
-              store.payload.weekly?.usedPercent != nil || store.payload.session?.usedPercent != nil
+              let bridgeFrame = NotchGeometry.cameraBridgeFrame(on: screen, fallbackSize: Self.fallbackSize)
         else {
             cameraBridgePanel.orderOut(nil)
             return
@@ -241,7 +246,7 @@ private struct QuotaSideReadoutView: View {
     }
 
     private var percentText: String {
-        remainingPercent.map { "\($0)%" } ?? ""
+        remainingPercent.map { "\($0)%" } ?? "—"
     }
 
     /// Uses the same five-stage scale as the dashboard, so a color always
@@ -290,14 +295,12 @@ private struct QuotaSideReadoutView: View {
 
     var body: some View {
         ZStack {
-            if let remainingPercent {
-                tabShape.fill(Color.black)
-                Text("\(remainingPercent)")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(readoutColor)
-                    .offset(x: textOffset)
-            }
+            tabShape.fill(Color.black)
+            Text(remainingPercent.map(String.init) ?? "—")
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(readoutColor)
+                .offset(x: textOffset)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(tabShape)

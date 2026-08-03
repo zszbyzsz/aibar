@@ -79,6 +79,11 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     private var pendingCompletions: [String: (project: String, outcome: ActivityOutcome?, remainingPolls: Int)] = [:]
 
     private var pollTimer: Timer?
+    /// A first activity pass can need to inspect a large current rollout.
+    /// Skipping timer ticks while that pass is still in flight prevents a
+    /// backlog of duplicate SQLite/JSONL reads from delaying the very capsule
+    /// those reads are trying to display.
+    private var isPolling = false
     private var hideWorkItem: DispatchWorkItem?
     /// Clears `completedAnnouncement` once it's had its
     /// `completionAnnouncementDuration` on screen. Cancelled if a new
@@ -127,11 +132,8 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// percentage readouts beside the notch.
     private var presentedFromQuotaReadout = false
     var onQuotaPresentationCollapsed: (() -> Void)?
-    /// User-facing on/off switch (menu bar icon's right-click menu),
-    /// persisted across launches. Polling and sound still run while
-    /// disabled — only the pill itself stays off screen — so re-enabling
-    /// picks up whatever's currently active within one poll interval
-    /// instead of waiting for the next state transition.
+    /// User-facing on/off switch from the status-item menu. Polling continues
+    /// while hidden so re-enabling immediately reflects current activity.
     private(set) var isEnabled = ActivityStatusBarController.loadEnabledPreference()
 
     /// Loose enough not to matter perf-wise or read as needlessly chatty —
@@ -175,7 +177,6 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         guard UserDefaults.standard.object(forKey: enabledDefaultsKey) != nil else { return true }
         return UserDefaults.standard.bool(forKey: enabledDefaultsKey)
     }
-
     override init() {
         panel = NSPanel(
             contentRect: .zero,
@@ -210,6 +211,7 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         )
 
         if CommandLine.arguments.contains("--demo") {
+            isEnabled = true
             if !CommandLine.arguments.contains("--open") {
                 let now = Date()
                 rows = [
@@ -219,12 +221,15 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
                         display: .active(
                             ProjectActivity(
                                 project: "aibar",
+                                conversationTitle: "优化活动胶囊展示",
+                                goalObjective: "完善活动胶囊的对话与计划显示",
                                 model: "gpt-5.6-sol",
-                                phase: .editing,
+                                phase: .usingScreen,
                                 lastActivityAt: now,
                                 startedAt: now.addingTimeInterval(-6_643),
                                 timingScope: .continuousGoal,
-                                sessionTokens: 1_850_000_000,
+                                currentContextTokens: 184_000,
+                                conversationTokens: 789_000_000,
                                 sandboxPolicy: "workspace-write",
                                 approvalMode: "on-request",
                                 threadID: "preview-thread"
@@ -233,7 +238,6 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
                     )
                 ]
             }
-            isEnabled = true
             panel.setFrame(currentCapsuleFrame(), display: false)
             targetFrame = panel.frame
             updateVisibility()
@@ -256,6 +260,8 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     }
 
     private func poll() {
+        guard !isPolling else { return }
+        isPolling = true
         let monitor = monitor
         // Fetches comfortably more than `maxRunningRows` — some of the most
         // recently updated threads in that window may already be idle, so
@@ -265,7 +271,12 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
             let states = monitor.activeThreadStates(limit: 20)
             guard let self else { return }
             await self.apply(states)
+            await self.finishPolling()
         }
+    }
+
+    private func finishPolling() {
+        isPolling = false
     }
 
     private func restartPollTimer(interval: TimeInterval) {
@@ -311,7 +322,7 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
                     // Not trusted yet — keep it, and keep showing the row as
                     // still running (using its last known state) rather than
                     // blinking it away only to possibly bring it right back.
-                    pendingCompletions[entry.key] = (project: previous.project, outcome: outcome, remainingPolls: remaining)
+                    pendingCompletions[entry.key] = (project: previous.displayTitle, outcome: outcome, remainingPolls: remaining)
                     stillRunningKeys.insert(entry.key)
                     if runningRows.count < Self.maxRunningRows {
                         runningRows.append(CapsuleRow(id: "active-\(entry.key)", threadID: entry.key, display: .active(previous)))
@@ -326,7 +337,7 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
                     playSound(for: outcome)
                     announceCompletion(
                         key: entry.key,
-                        project: previous.project,
+                        project: previous.displayTitle,
                         outcome: outcome ?? .completed
                     )
                 }

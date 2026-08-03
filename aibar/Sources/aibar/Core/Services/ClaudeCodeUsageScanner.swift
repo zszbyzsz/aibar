@@ -12,9 +12,8 @@ import Foundation
 final class ClaudeCodeUsageScanner {
     private let sessionsRoot: URL
     private let cachePath: URL
-    // Bumped when `input_tokens` changed meaning here (see `process`) — cached
-    // summaries written under the old shape would price cache reads wrong.
-    private static let cacheVersion = 3
+    // Version 4 adds tool-name/day counters for the Tool Activity trends.
+    private static let cacheVersion = 4
     private static let fileToolNames: Set<String> = ["Edit", "Write", "MultiEdit", "NotebookEdit"]
 
     init() {
@@ -66,6 +65,8 @@ final class ClaudeCodeUsageScanner {
         var project: String?
         var toolCallCount = 0
         var filesChangedCount = 0
+        var toolUsage: [String: Int] = [:]
+        var dailyToolUsage: [String: [String: Int]] = [:]
         var latestAt = Formatting.isoTimestamp(from: fallbackAt)
         var sawUsage = false
 
@@ -78,7 +79,8 @@ final class ClaudeCodeUsageScanner {
                     let lineData = Data(bytes: bytes.baseAddress! + lineStart, count: index - lineStart)
                     process(lineData: lineData, latestAt: &latestAt, totals: &totals,
                             usageByModel: &usageByModel, project: &project,
-                            toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount, sawUsage: &sawUsage)
+                            toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount,
+                            toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage, sawUsage: &sawUsage)
                 }
                 lineStart = index + 1
             }
@@ -86,20 +88,24 @@ final class ClaudeCodeUsageScanner {
                 let lineData = Data(bytes: bytes.baseAddress! + lineStart, count: bytes.count - lineStart)
                 process(lineData: lineData, latestAt: &latestAt, totals: &totals,
                         usageByModel: &usageByModel, project: &project,
-                        toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount, sawUsage: &sawUsage)
+                        toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount,
+                        toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage, sawUsage: &sawUsage)
             }
         }
 
         guard sawUsage else { return nil }
         return FileSummary(endedAt: latestAt, usage: totals, usageByModel: usageByModel,
                             limitsByKind: [:], planType: nil, planAt: nil,
-                            project: project, toolCallCount: toolCallCount, filesChangedCount: filesChangedCount)
+                            project: project, toolCallCount: toolCallCount, filesChangedCount: filesChangedCount,
+                            toolUsage: toolUsage, dailyToolUsage: dailyToolUsage)
     }
 
     private func process(
         lineData: Data, latestAt: inout String, totals: inout [String: Int],
         usageByModel: inout [String: [String: Int]], project: inout String?,
-        toolCallCount: inout Int, filesChangedCount: inout Int, sawUsage: inout Bool
+        toolCallCount: inout Int, filesChangedCount: inout Int,
+        toolUsage: inout [String: Int], dailyToolUsage: inout [String: [String: Int]],
+        sawUsage: inout Bool
     ) {
         guard let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { return }
         if let timestamp = obj["timestamp"] as? String { latestAt = timestamp }
@@ -113,7 +119,12 @@ final class ClaudeCodeUsageScanner {
         if let content = message["content"] as? [[String: Any]] {
             for block in content where (block["type"] as? String) == "tool_use" {
                 toolCallCount += 1
-                if let name = block["name"] as? String, Self.fileToolNames.contains(name) {
+                let name = ((block["name"] as? String) ?? "other").trimmingCharacters(in: .whitespacesAndNewlines)
+                let toolName = name.isEmpty ? "other" : name
+                let dateKey = UsageAggregation.isoDateOnly(Formatting.parseISODate(latestAt) ?? Date())
+                toolUsage[toolName, default: 0] += 1
+                dailyToolUsage[dateKey, default: [:]][toolName, default: 0] += 1
+                if Self.fileToolNames.contains(toolName) {
                     filesChangedCount += 1
                 }
             }

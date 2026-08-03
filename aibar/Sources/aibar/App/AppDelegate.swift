@@ -4,6 +4,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchController: NotchWindowController?
     private var activityStatusBarController: ActivityStatusBarController?
     private var quotaStatusBarController: QuotaStatusBarController?
+    /// Retained for the lifetime of the app. `NSStatusBar` does not keep a
+    /// menu-bar item visible once its owner releases it.
     private var statusItem: NSStatusItem?
     private var screenshotCoordinator: ScreenshotCoordinator?
     private var screenshotHotKey: GlobalScreenshotHotKey?
@@ -62,33 +64,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         service.start()
     }
 
-    /// A menu-bar icon is the only affordance for opening the dashboard (or
-    /// quitting) that doesn't depend on the mouse already being at the notch —
-    /// left-click toggles the panel directly, right-click gets a small menu for
-    /// the same toggle plus Quit.
+    /// Left-click toggles the dashboard directly. Right-click opens the
+    /// application menu without permanently attaching it to the status item,
+    /// which would otherwise consume the left-click action.
     private func setUpStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let button = item.button {
-            button.image = BrandIcon.menuBarImage()
-            button.imagePosition = .imageOnly
-            button.toolTip = "aibar"
-            button.target = self
-            button.action = #selector(statusItemClicked(_:))
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        }
+        guard let button = item.button else { return }
+
+        button.image = BrandIcon.menuBarImage()
+        button.imagePosition = .imageOnly
+        button.toolTip = "aibar"
+        button.target = self
+        button.action = #selector(statusItemClicked(_:))
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem = item
-    }
-
-    /// Keep the runtime application identity in sync with the Finder icon.
-    /// This is also used by system-owned UI such as app switchers and alerts
-    /// if the accessory application is surfaced there.
-    private func configureApplicationIcon() {
-        guard
-            let iconURL = Bundle.main.url(forResource: "aibar", withExtension: "icns"),
-            let image = NSImage(contentsOf: iconURL)
-        else { return }
-
-        NSApp.applicationIconImage = image
     }
 
     @MainActor
@@ -101,21 +90,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Assigning `.menu` and immediately performing a synthetic click is the
-    /// standard way to show an on-demand menu from an NSStatusItem without
-    /// permanently attaching one — a permanent menu would swallow left-clicks
-    /// and break the direct toggle above.
+    /// Attach the menu only for the duration of this click. Keeping it
+    /// detached at rest preserves the direct left-click dashboard toggle.
     @MainActor
     private func showStatusMenu() {
         guard let controller = notchController, let item = statusItem else { return }
         let lang = controller.currentLanguage
         let menu = NSMenu()
+
         let toggleTitle = controller.isExpanded ? L.hidePanel(lang) : L.showPanel(lang)
         let toggleItem = NSMenuItem(title: toggleTitle, action: #selector(toggleFromMenu), keyEquivalent: "")
         toggleItem.target = self
         menu.addItem(toggleItem)
 
-        let capsuleItem = NSMenuItem(title: L.activityCapsuleMenuTitle(lang), action: #selector(toggleCapsuleFromMenu), keyEquivalent: "")
+        let capsuleItem = NSMenuItem(
+            title: L.activityCapsuleMenuTitle(lang),
+            action: #selector(toggleCapsuleFromMenu),
+            keyEquivalent: ""
+        )
         capsuleItem.target = self
         capsuleItem.state = (activityStatusBarController?.isEnabled ?? true) ? .on : .off
         menu.addItem(capsuleItem)
@@ -129,7 +121,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(screenshotItem)
 
         menu.addItem(.separator())
-        let updateItem = NSMenuItem(title: L.checkForUpdates(lang), action: #selector(checkForUpdatesFromMenu), keyEquivalent: "")
+
+        let updateItem = NSMenuItem(
+            title: L.checkForUpdates(lang),
+            action: #selector(checkForUpdatesFromMenu),
+            keyEquivalent: ""
+        )
         updateItem.target = self
         menu.addItem(updateItem)
 
@@ -159,10 +156,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// A deliberate menu command is consent to download and apply an
-    /// available verified update. The helper keeps the current bundle in
-    /// place unless its signing identity matches the downloaded one, which
-    /// is what lets macOS retain existing TCC permissions such as Screen
-    /// Recording after the relaunch.
+    /// available verified update. The helper preserves the current bundle if
+    /// the downloaded build fails identity or integrity validation.
     @MainActor
     @objc private func checkForUpdatesFromMenu() {
         guard let updateService else { return }
@@ -178,8 +173,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .updateAvailable(let notice):
                 do {
                     try SelfUpdateInstaller.install(notice)
-                    // The helper takes over after this app exits and relaunches
-                    // the new bundle. There is intentionally no second click.
                 } catch {
                     self?.presentUpdateAlert(
                         title: lang == .zh ? "无法自动更新" : "Couldn’t Update Automatically",
@@ -210,4 +203,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func quitFromMenu() {
         NSApplication.shared.terminate(nil)
     }
+
+    /// Keep the runtime application identity in sync with the Finder icon.
+    /// This is also used by system-owned UI such as app switchers and alerts
+    /// if the accessory application is surfaced there.
+    private func configureApplicationIcon() {
+        guard
+            let iconURL = Bundle.main.url(forResource: "aibar", withExtension: "icns"),
+            let image = NSImage(contentsOf: iconURL)
+        else { return }
+
+        NSApp.applicationIconImage = image
+    }
+
 }

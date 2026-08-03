@@ -138,11 +138,17 @@ enum UsageAggregation {
         var latestSessionUsageByDate: [String: [String: [String: Int]]] = [:]
         var monthToolCalls = 0
         var monthFilesChanged = 0
+        var monthToolUsage: [String: Int] = [:]
+        var dailyToolUsage: [String: [String: Int]] = [:]
         // Unlike the overall model list, this keeps the model dimension nested
         // under each project. A session has one cwd but can switch models, so
         // recording only `projectTokens` here would make the breakdown
         // impossible to reconstruct later.
         var projectUsageByDate: [String: [String: [String: [String: Int]]]] = [:]
+        // The project card is a 90-day view. Keep its per-day totals beside
+        // the aggregate so the UI can draw a faithful trend without doing any
+        // additional transcript work.
+        var projectDailyTokens: [String: [String: Int]] = [:]
 
         func addProjectUsage(
             _ usageByModel: [String: [String: Int]],
@@ -152,6 +158,29 @@ enum UsageAggregation {
             for (model, usage) in usageByModel {
                 for (counter, value) in usage {
                     projectUsageByDate[dateKey, default: [:]][project, default: [:]][model, default: [:]][counter, default: 0] += value
+                }
+            }
+        }
+
+        /// Tool events have their own dates, unlike the legacy session-level
+        /// totals. Prefer the detailed counters so a long-running session is
+        /// attributed to the days on which its tools were actually invoked;
+        /// retain the old end-date behavior for caches/providers without them.
+        func addToolUsage(_ summary: FileSummary, ended: Date) {
+            if !summary.dailyToolUsage.isEmpty {
+                for (dateKey, tools) in summary.dailyToolUsage {
+                    guard let day = dateFromDayKey(dateKey, timeZone: calendarTimeZone), day >= monthStart else { continue }
+                    for (tool, calls) in tools where calls > 0 {
+                        monthToolCalls += calls
+                        monthToolUsage[tool, default: 0] += calls
+                        dailyToolUsage[dateKey, default: [:]][tool, default: 0] += calls
+                    }
+                }
+            } else if ended >= monthStart {
+                monthToolCalls += summary.toolCallCount
+                for (tool, calls) in summary.toolUsage where calls > 0 {
+                    monthToolUsage[tool, default: 0] += calls
+                    dailyToolUsage[isoDateOnly(ended, timeZone: calendarTimeZone), default: [:]][tool, default: 0] += calls
                 }
             }
         }
@@ -175,6 +204,7 @@ enum UsageAggregation {
                     latestPlan = planType
                 }
             }
+            addToolUsage(summary, ended: ended)
             for (kind, slot) in summary.limitsByKind {
                 let slotAt = Formatting.parseISODate(slot.at) ?? ended
                 if let existing = limitsByKind[kind] {
@@ -211,7 +241,6 @@ enum UsageAggregation {
                 merge(byModel, into: &dailyByDate[endedKey, default: [:]])
                 if ended >= monthStart {
                     merge(byModel, into: &monthByModel)
-                    monthToolCalls += summary.toolCallCount
                     monthFilesChanged += summary.filesChangedCount
                 }
                 if ended >= heatmapStart {
@@ -241,10 +270,10 @@ enum UsageAggregation {
                 if dateKey == todayKey { merge(eventUsageByModel, into: &todayByModel) }
             }
 
-            // Tool calls and file changes do not yet carry token-equivalent
-            // event records, so keep their former session-level accounting.
+            // File changes remain session-level — their source records don't
+            // contain a stable per-file event timestamp — while tool calls are
+            // accounted above from their own event-day counters.
             if ended >= monthStart {
-                monthToolCalls += summary.toolCallCount
                 monthFilesChanged += summary.filesChangedCount
             }
         }
@@ -321,6 +350,9 @@ enum UsageAggregation {
                 if offset <= 89 {
                     for (project, byModel) in normalizedProjects {
                         merge(byModel, into: &projectUsageByModel[project, default: [:]])
+                        projectDailyTokens[dateKey, default: [:]][project, default: 0] += byModel.values.reduce(0) {
+                            $0 + ($1["total_tokens"] ?? 0)
+                        }
                     }
                 }
             }
@@ -359,6 +391,9 @@ enum UsageAggregation {
                 let byProject = projectUsageByDate[dateKey] ?? [:]
                 for (project, byModel) in byProject {
                     merge(byModel, into: &projectUsageByModel[project, default: [:]])
+                    projectDailyTokens[dateKey, default: [:]][project, default: 0] += byModel.values.reduce(0) {
+                        $0 + ($1["total_tokens"] ?? 0)
+                    }
                 }
             }
         }
@@ -439,6 +474,30 @@ enum UsageAggregation {
         let monthCachedTokens = monthByModel.values.reduce(0) { $0 + ($1["cached_input_tokens"] ?? 0) }
         let todayInputTokens = todayByModel.values.reduce(0) { $0 + ($1["input_tokens"] ?? 0) }
         let todayCachedTokens = todayByModel.values.reduce(0) { $0 + ($1["cached_input_tokens"] ?? 0) }
+
+        func recentDateKeys(_ count: Int) -> [String] {
+            (0..<count).map { index in
+                let date = calendar.date(byAdding: .day, value: -(count - 1 - index), to: todayStart) ?? todayStart
+                return isoDateOnly(date, timeZone: calendarTimeZone)
+            }
+        }
+
+        let modelTrendDates = recentDateKeys(30)
+        let projectTrendDates = recentDateKeys(90)
+
+        var tools: [ToolUsage] = []
+        for (name, calls) in monthToolUsage {
+            let trend = modelTrendDates.map { dateKey in
+                dailyToolUsage[dateKey]?[name] ?? 0
+            }
+            tools.append(ToolUsage(name: name, calls: calls, dailyCalls: trend))
+        }
+        tools.sort { lhs, rhs in
+            lhs.calls == rhs.calls
+                ? lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                : lhs.calls > rhs.calls
+        }
+
         var projects: [ProjectUsage] = []
         for (project, usageByModel) in projectUsageByModel {
             var models: [ProjectModelUsage] = []
@@ -461,7 +520,8 @@ enum UsageAggregation {
                 name: project,
                 tokens: models.reduce(0) { $0 + $1.tokens },
                 apiEquivalentCost: models.reduce(0) { $0 + $1.apiEquivalentCost },
-                models: models
+                models: models,
+                dailyTokens: projectTrendDates.map { projectDailyTokens[$0]?[project] ?? 0 }
             ))
         }
         projects.sort { $0.tokens == $1.tokens ? $0.name < $1.name : $0.tokens > $1.tokens }
@@ -469,15 +529,22 @@ enum UsageAggregation {
 
         var modelBreakdown: [ModelUsage] = []
         for (model, usage) in monthByModel.sorted(by: { ($0.value["total_tokens"] ?? 0) > ($1.value["total_tokens"] ?? 0) }) {
+            let dailyTokens = modelTrendDates.map { dailyByDate[$0]?[model]?["total_tokens"] ?? 0 }
             if let price = prices[normalizeModel(model)] {
                 let breakdown = categoryCost(usage, price: price)
                 modelBreakdown.append(ModelUsage(
                     model: model, tokens: usage["total_tokens"] ?? 0,
                     apiEquivalentCost: breakdown.input + breakdown.cached + breakdown.output,
-                    inputCost: breakdown.input, cachedCost: breakdown.cached, outputCost: breakdown.output
+                    inputCost: breakdown.input, cachedCost: breakdown.cached, outputCost: breakdown.output,
+                    dailyTokens: dailyTokens
                 ))
             } else {
-                modelBreakdown.append(ModelUsage(model: model, tokens: usage["total_tokens"] ?? 0, apiEquivalentCost: 0))
+                modelBreakdown.append(ModelUsage(
+                    model: model,
+                    tokens: usage["total_tokens"] ?? 0,
+                    apiEquivalentCost: 0,
+                    dailyTokens: dailyTokens
+                ))
             }
         }
 
@@ -508,6 +575,7 @@ enum UsageAggregation {
             monthCachedTokens: monthCachedTokens,
             monthToolCalls: monthToolCalls,
             monthFilesChanged: monthFilesChanged,
+            tools: tools,
             monthUnpricedModels: monthUnpriced,
             models: modelBreakdown,
             daily: daily,

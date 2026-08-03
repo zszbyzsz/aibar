@@ -30,9 +30,20 @@ extension Color {
     static let notchMutedInk = Color(red: 0.561, green: 0.616, blue: 0.667)
     static let notchRule = Color.white.opacity(0.09)
     static let notchAccent = Color(red: 0.039, green: 0.518, blue: 1.000)
+    /// A violet signal reserved for visible screen control. Keeping it out of
+    /// the normal blue activity palette makes this state legible even before
+    /// the phase label is read.
+    static let notchScreenAccent = Color(red: 0.690, green: 0.455, blue: 1.000)
     static let notchAccentSoft = Color(red: 0.039, green: 0.518, blue: 1.000).opacity(0.16)
     static let notchTealSoft = Color(red: 0.039, green: 0.518, blue: 1.000).opacity(0.35)
     static let notchCardFill = Color(red: 0.078, green: 0.090, blue: 0.110)
+    /// A slightly lifted top tone gives cards depth against the true-black
+    /// panel without introducing a separate surface color or visible gloss.
+    static let notchCardHighlight = Color(red: 0.095, green: 0.110, blue: 0.137)
+    /// Shared border treatment for metric and section cards. The neutral edge
+    /// stays legible on every display while the blue tint preserves the app's
+    /// existing identity without outlining every card too loudly.
+    static let notchCardBorder = Color.white.opacity(0.10)
     /// Track background for meters/bars — a faint white wash reads as a
     /// recessed groove against the dark card fill.
     static let notchTrack = Color.white.opacity(0.08)

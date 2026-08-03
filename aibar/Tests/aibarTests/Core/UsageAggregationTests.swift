@@ -141,6 +141,10 @@ final class UsageAggregationTests: XCTestCase {
         XCTAssertEqual(payload.topProjects.first?.name, "aibar")
         XCTAssertEqual(payload.topProjects.first?.models.map(\.model), ["gpt-test"])
         XCTAssertEqual(payload.topProjects.first?.models.first?.tokens, 1_100_000)
+        XCTAssertEqual(payload.models.first?.dailyTokens.count, 30)
+        XCTAssertEqual(payload.models.first?.dailyTokens.last, 1_100_000)
+        XCTAssertEqual(payload.topProjects.first?.dailyTokens.count, 90)
+        XCTAssertEqual(payload.topProjects.first?.dailyTokens.last, 1_100_000)
         XCTAssertEqual(payload.monthCost, 2.5, accuracy: 0.000_001)
         XCTAssertEqual(payload.models.first?.apiEquivalentCost ?? 0, 2.5, accuracy: 0.000_001)
     }

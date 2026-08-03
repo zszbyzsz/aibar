@@ -1,10 +1,10 @@
 import Foundation
 import SQLite3
 
-/// Reads only safe thread-index metadata from Codex Desktop's local SQLite
-/// database. The database also contains titles and message previews, but this
-/// monitor intentionally never selects them. A short tail read of the active
-/// thread's JSONL determines the activity phase without retaining content.
+/// Reads the minimal thread-index metadata needed for Codex activity. A
+/// conversation's display title and the current persisted Goal objective are
+/// selected intentionally; message previews and transcript bodies remain
+/// unread. A short tail read determines the activity phase and token counters.
 struct CodexActivityMonitor {
     /// A thread with no index update for this long is treated as idle. This is
     /// intentionally an activity indicator, not a claim about an exact percent
@@ -15,7 +15,7 @@ struct CodexActivityMonitor {
     private let rolloutStartCache = RolloutStartCache()
 
     private enum GoalTimingEvent {
-        case active(startedAt: Date)
+        case active(startedAt: Date, objective: String?)
         case inactive
     }
 
@@ -27,6 +27,7 @@ struct CodexActivityMonitor {
     private struct ActivityTiming {
         let startedAt: Date
         let scope: ProjectActivity.TimingScope
+        let goalObjective: String?
     }
 
     /// Polling happens on detached utility tasks. Cache the last resolved turn
@@ -37,6 +38,7 @@ struct CodexActivityMonitor {
             let fileSize: UInt64
             let taskStartedAt: Date?
             let goalStartedAt: Date?
+            let goalObjective: String?
         }
 
         private var entries: [String: Entry] = [:]
@@ -69,37 +71,136 @@ struct CodexActivityMonitor {
             let taskStartedAt = scan.taskStartedAt
                 ?? (scanFloor > 0 ? previous?.taskStartedAt : nil)
             let goalStartedAt: Date?
+            let goalObjective: String?
             if let goalEvent = scan.goalEvent {
                 switch goalEvent {
-                case .active(let startedAt): goalStartedAt = startedAt
-                case .inactive: goalStartedAt = nil
+                case .active(let startedAt, let objective):
+                    goalStartedAt = startedAt
+                    goalObjective = objective
+                case .inactive:
+                    goalStartedAt = nil
+                    goalObjective = nil
                 }
             } else {
                 goalStartedAt = scanFloor > 0 ? previous?.goalStartedAt : nil
+                goalObjective = scanFloor > 0 ? previous?.goalObjective : nil
             }
             entries[path] = Entry(
                 fileSize: fileSize,
                 taskStartedAt: taskStartedAt,
-                goalStartedAt: goalStartedAt
+                goalStartedAt: goalStartedAt,
+                goalObjective: goalObjective
             )
             return Self.resolvedTiming(from: entries[path])
         }
 
         private static func resolvedTiming(from entry: Entry?) -> ActivityTiming? {
             if let startedAt = entry?.goalStartedAt {
-                return ActivityTiming(startedAt: startedAt, scope: .continuousGoal)
+                return ActivityTiming(
+                    startedAt: startedAt,
+                    scope: .continuousGoal,
+                    goalObjective: entry?.goalObjective
+                )
             }
             if let startedAt = entry?.taskStartedAt {
-                return ActivityTiming(startedAt: startedAt, scope: .currentTurn)
+                return ActivityTiming(startedAt: startedAt, scope: .currentTurn, goalObjective: nil)
             }
             return nil
         }
     }
 
-    init() {
-        let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
+    init(codexHome: URL? = nil) {
+        let resolvedCodexHome = codexHome
+            ?? ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
-        databaseURL = codexHome.appendingPathComponent("state_5.sqlite")
+        databaseURL = Self.stateDatabaseURL(in: resolvedCodexHome)
+    }
+
+    /// Codex has used both the root of `.codex` and its `sqlite/` subdirectory
+    /// for the live state database.  A migration can leave the old database in
+    /// place indefinitely, so existence alone is not evidence that it is the
+    /// one Codex is still writing.  Prefer the database whose thread index has
+    /// the newest activity, then use the database/WAL modification time only
+    /// as a tie-breaker.
+    static func stateDatabaseURL(in codexHome: URL) -> URL {
+        let rootDatabase = codexHome.appendingPathComponent("state_5.sqlite")
+        let nestedDatabase = codexHome.appendingPathComponent("sqlite/state_5.sqlite")
+        let candidates = [rootDatabase, nestedDatabase].compactMap { url -> StateDatabaseCandidate? in
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return StateDatabaseCandidate(
+                url: url,
+                newestThreadUpdate: newestThreadUpdate(in: url),
+                latestFileModification: latestFileModification(for: url)
+            )
+        }
+
+        guard var preferred = candidates.first else { return rootDatabase }
+        for candidate in candidates.dropFirst() where candidate.isNewer(than: preferred) {
+            preferred = candidate
+        }
+        return preferred.url
+    }
+
+    private struct StateDatabaseCandidate {
+        let url: URL
+        let newestThreadUpdate: Int64?
+        let latestFileModification: Date?
+
+        func isNewer(than other: Self) -> Bool {
+            switch (newestThreadUpdate, other.newestThreadUpdate) {
+            case let (current?, previous?) where current != previous:
+                return current > previous
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            default:
+                break
+            }
+
+            switch (latestFileModification, other.latestFileModification) {
+            case let (current?, previous?) where current != previous:
+                return current > previous
+            case (_?, nil):
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private static func newestThreadUpdate(in databaseURL: URL) -> Int64? {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+              let database
+        else { return nil }
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        // `updated_at` is present in both known schema generations.  Keeping
+        // this query to that stable column lets path detection work even if a
+        // newer Codex version changes optional millisecond columns.
+        guard sqlite3_prepare_v2(
+            database,
+            "SELECT MAX(updated_at) FROM threads WHERE archived = 0",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK,
+        let statement
+        else { return nil }
+        defer { sqlite3_finalize(statement) }
+
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              sqlite3_column_type(statement, 0) != SQLITE_NULL
+        else { return nil }
+        return sqlite3_column_int64(statement, 0)
+    }
+
+    private static func latestFileModification(for databaseURL: URL) -> Date? {
+        [databaseURL, databaseURL.appendingPathExtension("wal")]
+            .compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+            .max()
     }
 
     /// Kept for the hover dashboard (`UsageStore`), which only ever needs the
@@ -132,6 +233,7 @@ struct CodexActivityMonitor {
     private struct ThreadRow {
         let id: String
         let cwd: String
+        let title: String
         let model: String?
         let tokensUsed: Int
         let updatedAt: Date?
@@ -146,7 +248,7 @@ struct CodexActivityMonitor {
         let isSubagent: Bool
     }
 
-    /// Up to `limit` of the most recently updated non-archived *conversations*,
+    /// Up to `limit` of the recently active non-archived *conversations*,
     /// each resolved the same way a single thread is resolved below.
     ///
     /// A conversation is deliberately not the same thing as a thread. Codex
@@ -185,6 +287,25 @@ struct CodexActivityMonitor {
 
         var results: [ThreadActivity] = []
         for row in rows where !row.isSubagent {
+            // Resolving a rollout's timing may walk backward through a large
+            // JSONL file.  On launch, scanning the 20 most-recent *idle*
+            // conversations before reaching the one Codex is working on can
+            // delay the first capsule by many seconds.  Only a recent parent
+            // or a parent with a recent delegate can possibly be active; the
+            // latter condition preserves the important case where a parent is
+            // waiting while its sub-agent is using a tool or screen.
+            let parentIsRecent = row.updatedAt.map {
+                now.timeIntervalSince($0) <= Self.activeWindow
+            } ?? false
+            let hasRecentDescendant = !parentIsRecent && descendants(
+                of: row.id,
+                childIDsByParent: childIDsByParent,
+                rowsByID: rowsByID
+            ).contains { descendant in
+                guard let updatedAt = descendant.updatedAt else { return false }
+                return now.timeIntervalSince(updatedAt) <= Self.activeWindow
+            }
+            guard parentIsRecent || hasRecentDescendant else { continue }
             guard results.count < Int(limit) else { break }
             results.append(ThreadActivity(
                 key: row.id,
@@ -211,6 +332,14 @@ struct CodexActivityMonitor {
         let ownOutcome = ownSnapshot.outcome
         var lastActivity = row.updatedAt ?? .distantPast
         var delegateWorking = false
+        // A parent thread can be waiting on a sub-agent that is operating the
+        // screen. Keep the newest active phase across the whole conversation
+        // so the capsule reflects what is actually happening, rather than
+        // reducing every delegated action to the generic tool glyph.
+        var latestActivePhase: (phase: ProjectActivity.Phase, updatedAt: Date)?
+        if case .active(let phase) = ownOutcome {
+            latestActivePhase = (phase, row.updatedAt ?? .distantPast)
+        }
 
         for child in descendants(of: row.id, childIDsByParent: childIDsByParent, rowsByID: rowsByID) {
             guard let childUpdated = child.updatedAt else { continue }
@@ -220,11 +349,14 @@ struct CodexActivityMonitor {
             // skipping it keeps the per-poll rollout reads bounded to the
             // handful of delegates that are genuinely live.
             guard now.timeIntervalSince(childUpdated) <= Self.activeWindow else { continue }
-            if case .active = rolloutSnapshot(
+            if case .active(let phase) = rolloutSnapshot(
                 forRolloutAt: child.rolloutPath,
                 resolveTiming: false
             ).outcome {
                 delegateWorking = true
+                if latestActivePhase == nil || childUpdated >= latestActivePhase!.updatedAt {
+                    latestActivePhase = (phase, childUpdated)
+                }
             }
         }
 
@@ -233,6 +365,8 @@ struct CodexActivityMonitor {
             ProjectActivity(
                 project: (row.cwd as NSString).lastPathComponent.isEmpty
                     ? row.cwd : (row.cwd as NSString).lastPathComponent,
+                conversationTitle: Self.normalizedDisplayText(row.title) ?? "",
+                goalObjective: ownSnapshot.goalObjective,
                 model: row.model,
                 phase: phase,
                 lastActivityAt: lastActivity,
@@ -241,13 +375,12 @@ struct CodexActivityMonitor {
                 // immediately appear hours or days old.
                 startedAt: ownSnapshot.startedAt ?? row.createdAt ?? lastActivity,
                 timingScope: ownSnapshot.timingScope,
-                // Falls back to the database's `tokens_used`, which is a
-                // lifetime cumulative sum across every turn ever sent for
-                // this thread (often tens of millions of tokens) — not the
-                // conversation's actual current context size. That fallback
-                // only fires before the rollout's first `token_count` event
-                // has landed.
-                sessionTokens: ownSnapshot.contextTokens ?? row.tokensUsed,
+                // Before the first token_count event lands, the database's
+                // cumulative counter is the only available fallback. Once an
+                // event exists, both values come from that same snapshot so
+                // the capsule never pairs counters from different turns.
+                currentContextTokens: ownSnapshot.currentContextTokens ?? row.tokensUsed,
+                conversationTokens: ownSnapshot.conversationTokens ?? row.tokensUsed,
                 sandboxPolicy: row.sandboxPolicy,
                 approvalMode: row.approvalMode,
                 threadID: row.id
@@ -256,7 +389,7 @@ struct CodexActivityMonitor {
 
         switch ownOutcome {
         case .active(let phase) where withinWindow:
-            return .active(activity(phase: phase))
+            return .active(activity(phase: latestActivePhase?.phase ?? phase))
         case .active:
             // The rollout's last event still looks mid-task, but nothing has
             // updated in over `activeWindow` — Codex went quiet without an
@@ -267,7 +400,9 @@ struct CodexActivityMonitor {
             // The conversation's own turn has wrapped up, but it's waiting on
             // sub-agents it dispatched — still working, from the only point of
             // view a viewer has.
-            if delegateWorking && withinWindow { return .active(activity(phase: .usingTool)) }
+            if delegateWorking && withinWindow {
+                return .active(activity(phase: latestActivePhase?.phase ?? .usingTool))
+            }
             return .idle(reason)
         }
     }
@@ -301,7 +436,7 @@ struct CodexActivityMonitor {
     private func threadRows(database: OpaquePointer, limit: Int32) -> [ThreadRow] {
         let query = """
         SELECT cwd, model, tokens_used, updated_at_ms, sandbox_policy, approval_mode,
-               rollout_path, created_at_ms, id, thread_source
+               rollout_path, created_at_ms, id, thread_source, title
         FROM threads
         WHERE archived = 0
         ORDER BY updated_at_ms DESC
@@ -327,6 +462,7 @@ struct CodexActivityMonitor {
             rows.append(ThreadRow(
                 id: threadID,
                 cwd: cwd,
+                title: text(column: 10, statement: statement) ?? "",
                 model: text(column: 1, statement: statement),
                 tokensUsed: Int(sqlite3_column_int64(statement, 2)),
                 updatedAt: date(column: 3, statement: statement),
@@ -376,47 +512,85 @@ struct CodexActivityMonitor {
         return Date(timeIntervalSince1970: TimeInterval(milliseconds) / 1_000)
     }
 
+    /// Titles and Goal objectives can contain newlines or repeated spacing.
+    /// The capsule is a one-line control, so normalize presentation without
+    /// changing which conversation the text came from.
+    private static func normalizedDisplayText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        return normalized.isEmpty ? nil : normalized
+    }
+
     private enum RolloutOutcome {
         case active(ProjectActivity.Phase)
         case ended(ActivityOutcome)
     }
 
-    /// Only event type labels (and, for `token_count` events, the token
-    /// counters — never the prompt/response bodies they're attached to) are
-    /// inspected; message bodies and tool payloads are never surfaced or
-    /// cached.
+    /// Maps only declared tool metadata to a display phase. Tool inputs are
+    /// intentionally never inspected: screen contents, commands, prompts,
+    /// and file paths never need to enter the activity monitor to show a
+    /// useful live signal. MCP events keep their actual server/tool identity
+    /// under `invocation`, rather than the normal top-level `name` field.
+    static func activityPhase(
+        forToolName name: String?,
+        mcpServer: String? = nil,
+        mcpTool: String? = nil
+    ) -> ProjectActivity.Phase {
+        let normalizedName = name?.lowercased() ?? ""
+        let normalizedServer = mcpServer?.lowercased() ?? ""
+        let normalizedMCPTool = mcpTool?.lowercased() ?? ""
+
+        // `node_repl/js` is Codex Desktop's computer-use bridge. Its name
+        // does not itself contain "screen", which is why the old parser
+        // reduced a screen operation to the ordinary tools state.
+        if normalizedServer == "node_repl", normalizedMCPTool == "js" {
+            return .usingScreen
+        }
+
+        let screenMarkers = ["computer", "screen", "screenshot", "display", "desktop", "browser"]
+        let declaredIdentity = [normalizedName, normalizedServer, normalizedMCPTool]
+            .joined(separator: " ")
+        return screenMarkers.contains(where: { declaredIdentity.contains($0) })
+            ? .usingScreen
+            : .usingTool
+    }
+
+    /// Only event type labels, declared tool names, and (for `token_count`
+    /// events) token counters are inspected. Prompt/response bodies, screen
+    /// contents, commands, and tool inputs are never surfaced or cached.
     ///
-    /// Returns the phase/outcome alongside the conversation's current
-    /// context-window occupancy, i.e. `last_token_usage.total_tokens` off
-    /// the most recent `token_count` event in the tail — how many tokens the
-    /// *next* turn's prompt would actually carry. This is deliberately not
-    /// `total_token_usage`, which the same event reports right alongside it:
-    /// that field is a lifetime sum across every turn this thread has ever
-    /// sent, grows without bound over a long session, and does not reflect
-    /// what's actually sitting in context right now.
+    /// Returns both token counters from the latest `token_count`: current
+    /// context occupancy from `last_token_usage.total_tokens`, plus the
+    /// conversation-wide cumulative total from `total_token_usage.total_tokens`.
     private func rolloutSnapshot(
         forRolloutAt path: String?,
         resolveTiming: Bool = true
     ) -> (
         outcome: RolloutOutcome,
-        contextTokens: Int?,
+        currentContextTokens: Int?,
+        conversationTokens: Int?,
         startedAt: Date?,
-        timingScope: ProjectActivity.TimingScope
+        timingScope: ProjectActivity.TimingScope,
+        goalObjective: String?
     ) {
         guard let path, FileManager.default.fileExists(atPath: path),
               let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path))
-        else { return (.active(.working), nil, nil, .currentTurn) }
+        else { return (.active(.working), nil, nil, nil, .currentTurn, nil) }
         defer { try? handle.close() }
 
         let tailSize: UInt64 = 64 * 1_024
         let fileSize = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: fileSize > tailSize ? fileSize - tailSize : 0)
         guard let data = try? handle.readToEnd(), !data.isEmpty else {
-            return (.active(.working), nil, nil, .currentTurn)
+            return (.active(.working), nil, nil, nil, .currentTurn, nil)
         }
 
         var resolvedOutcome: RolloutOutcome?
-        var contextTokens: Int?
+        var currentContextTokens: Int?
+        var conversationTokens: Int?
+        var foundTokenCount = false
 
         for line in data.split(separator: 0x0A).reversed() {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
@@ -425,11 +599,14 @@ struct CodexActivityMonitor {
             let payloadType = payload?["type"] as? String
             let type = payloadType ?? topLevelType
 
-            if contextTokens == nil, type == "token_count",
-               let info = payload?["info"] as? [String: Any],
-               let lastUsage = info["last_token_usage"] as? [String: Any],
-               let total = lastUsage["total_tokens"] as? Int {
-                contextTokens = total
+            if !foundTokenCount, type == "token_count" {
+                foundTokenCount = true
+                if let info = payload?["info"] as? [String: Any] {
+                    let lastUsage = info["last_token_usage"] as? [String: Any]
+                    let totalUsage = info["total_token_usage"] as? [String: Any]
+                    currentContextTokens = lastUsage?["total_tokens"] as? Int
+                    conversationTokens = totalUsage?["total_tokens"] as? Int
+                }
             }
 
             if resolvedOutcome == nil {
@@ -441,21 +618,37 @@ struct CodexActivityMonitor {
                 case "patch_apply_end":
                     resolvedOutcome = .active(.editing)
                 case "custom_tool_call", "function_call", "mcp_tool_call_end", "tool_search_call", "web_search_call":
-                    resolvedOutcome = .active(.usingTool)
+                    let toolName = (payload?["name"] as? String) ?? (object["name"] as? String)
+                    let invocation = payload?["invocation"] as? [String: Any]
+                    resolvedOutcome = .active(Self.activityPhase(
+                        forToolName: toolName,
+                        mcpServer: invocation?["server"] as? String,
+                        mcpTool: invocation?["tool"] as? String
+                    ))
+                case "computer_call", "computer_call_output", "computer_use",
+                     "screen_tool_call", "screen_tool_call_output", "screen_capture",
+                     "screenshot":
+                    resolvedOutcome = .active(.usingScreen)
                 case "agent_reasoning", "reasoning":
                     resolvedOutcome = .active(.thinking)
-                case "task_started", "token_count", "agent_message", "response_item":
+                case "task_started", "agent_message", "response_item":
                     resolvedOutcome = .active(.working)
+                case "token_count":
+                    // A token counter is bookkeeping that normally lands
+                    // immediately after a tool result. It supplies the live
+                    // number above, but must not erase the just-recorded
+                    // screen/tool/editing phase while walking backward.
+                    break
                 default:
                     break
                 }
             }
 
-            if resolvedOutcome != nil, contextTokens != nil { break }
+            if resolvedOutcome != nil, foundTokenCount { break }
         }
         let outcome = resolvedOutcome ?? .active(.working)
         guard resolveTiming else {
-            return (outcome, contextTokens, nil, .currentTurn)
+            return (outcome, currentContextTokens, conversationTokens, nil, .currentTurn, nil)
         }
         // Resolve timing even when the parent's own turn has just completed:
         // the conversation can still be active while one of its delegates is
@@ -468,9 +661,11 @@ struct CodexActivityMonitor {
         )
         return (
             outcome,
-            contextTokens,
+            currentContextTokens,
+            conversationTokens,
             timing?.startedAt,
-            timing?.scope ?? .currentTurn
+            timing?.scope ?? .currentTurn,
+            timing?.goalObjective
         )
     }
 
@@ -496,7 +691,7 @@ struct CodexActivityMonitor {
         defer { try? handle.close() }
         guard let fileSize = try? handle.seekToEnd() else { return nil }
         let scan = rolloutTimingScan(in: handle, fileSize: fileSize, scanFloor: 0)
-        if case .active(let startedAt) = scan.goalEvent { return startedAt }
+        if case .active(let startedAt, _) = scan.goalEvent { return startedAt }
         return scan.taskStartedAt
     }
 
@@ -558,7 +753,10 @@ struct CodexActivityMonitor {
                         updatedAt = (object["timestamp"] as? String).flatMap(Formatting.parseISODate)
                     }
                     if let updatedAt {
-                        result.goalEvent = .active(startedAt: updatedAt.addingTimeInterval(-timeUsed))
+                        result.goalEvent = .active(
+                            startedAt: updatedAt.addingTimeInterval(-timeUsed),
+                            objective: normalizedDisplayText(goal["objective"] as? String)
+                        )
                     } else {
                         result.goalEvent = .inactive
                     }

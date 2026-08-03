@@ -10,6 +10,24 @@ final class UsageScannerTests: XCTestCase {
         return url
     }
 
+    func testLegacyCacheSummaryDecodesWithoutNewToolCounters() throws {
+        // v7 caches contain real token/project summaries but predate the two
+        // optional per-tool fields. A missing field must not invalidate the
+        // entire on-disk cache and trigger a full transcript rebuild.
+        let data = Data(
+            #"{"endedAt":"2026-08-02T10:00:00Z","usage":{"total_tokens":42},"usageByModel":{"gpt-5.6-sol":{"total_tokens":42}},"limitsByKind":{},"planType":"Pro","planAt":null,"project":"aibar","toolCallCount":3,"filesChangedCount":1}"#
+                .utf8
+        )
+
+        let summary = try JSONDecoder().decode(FileSummary.self, from: data)
+
+        XCTAssertEqual(summary.usage["total_tokens"], 42)
+        XCTAssertEqual(summary.toolCallCount, 3)
+        XCTAssertEqual(summary.toolUsage, [:])
+        XCTAssertEqual(summary.dailyToolUsage, [:])
+        XCTAssertEqual(summary.dailyUsageByModel, [:])
+    }
+
     func testParseSessionAggregatesTokensToolCallsAndLimits() throws {
         let lines = [
             #"{"timestamp":"2026-07-20T10:00:00Z","type":"session_meta","payload":{"cwd":"/Users/x/my-project"}}"#,

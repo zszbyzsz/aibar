@@ -12,15 +12,11 @@ struct ProjectActivityMonitorView: View {
             if isActive(at: context.date) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
-                        Circle()
-                            .fill(Color.notchAccent)
-                            .frame(width: 7, height: 7)
-                            .shadow(color: Color.notchAccent.opacity(0.8), radius: 4)
-                        Image(systemName: phaseIcon)
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(L.activityTitle(lang, project: activity.project))
+                        phaseMarker
+                        Text(L.activityTitle(lang, title: activity.displayTitle))
                             .font(.system(size: 11.5, weight: .bold))
                             .lineLimit(1)
+                            .help(activity.displayTitle)
                         Spacer(minLength: 8)
                         ProgressView()
                             .controlSize(.small)
@@ -34,15 +30,18 @@ struct ProjectActivityMonitorView: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(Capsule().fill(Color.notchAccent.opacity(0.12)))
-                    .overlay(Capsule().strokeBorder(Color.notchAccent.opacity(0.35), lineWidth: 1))
+                    .background(Capsule().fill(activityAccent.opacity(0.12)))
+                    .overlay(Capsule().strokeBorder(activityAccent.opacity(0.35), lineWidth: 1))
 
                     HStack(spacing: 7) {
-                        activityChip(icon: phaseIcon, text: L.activityPhase(lang, phase: activity.phase))
+                        phaseChip
                         if let model = activity.model, !model.isEmpty {
                             activityChip(icon: "cpu", text: model)
                         }
-                        activityChip(icon: "cube", text: L.activityTokens(lang, tokens: Formatting.tokenLabel(activity.sessionTokens)))
+                        activityChip(
+                            icon: "cube",
+                            text: "\(Formatting.contextTokenLabel(activity.currentContextTokens)) / \(Formatting.contextTokenLabel(activity.conversationTokens))"
+                        )
                         if !activity.sandboxPolicy.isEmpty {
                             activityChip(icon: "lock.shield", text: activity.sandboxPolicy)
                         }
@@ -51,7 +50,12 @@ struct ProjectActivityMonitorView: View {
                 }
                 .padding(.vertical, 2)
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(L.activityAccessibilityLabel(lang, project: activity.project, phase: activity.phase))
+                .accessibilityLabel(L.activityAccessibilityLabel(
+                    lang,
+                    title: activity.displayTitle,
+                    project: activity.project,
+                    phase: activity.phase
+                ))
             }
         }
     }
@@ -60,11 +64,56 @@ struct ProjectActivityMonitorView: View {
         date.timeIntervalSince(activity.lastActivityAt) <= CodexActivityMonitor.activeWindow
     }
 
-    private var phaseIcon: String {
+    @ViewBuilder
+    private var phaseMarker: some View {
+        switch activity.phase {
+        case .usingScreen:
+            CodexScreenToolBadge(size: 21)
+        default:
+            Circle()
+                .fill(Color.notchAccent)
+                .frame(width: 7, height: 7)
+                .shadow(color: Color.notchAccent.opacity(0.8), radius: 4)
+            CodexActivityPhaseIcon(phase: activity.phase, size: 11)
+        }
+    }
+
+    @ViewBuilder
+    private var phaseChip: some View {
+        switch activity.phase {
+        case .usingScreen:
+            HStack(spacing: 5) {
+                CodexActivityPhaseIcon(phase: activity.phase, size: 11)
+                Text(L.activityPhase(lang, phase: activity.phase))
+            }
+            .font(.system(size: 9.5, weight: .semibold))
+            .foregroundStyle(Color.notchScreenAccent)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Color.notchScreenAccent.opacity(0.16)))
+            .overlay(Capsule().strokeBorder(Color.notchScreenAccent.opacity(0.42), lineWidth: 1))
+        default:
+            activityChip(
+                icon: standardPhaseIcon,
+                text: L.activityPhase(lang, phase: activity.phase)
+            )
+        }
+    }
+
+    private var activityAccent: Color {
+        switch activity.phase {
+        case .usingScreen: return .notchScreenAccent
+        default: return .notchAccent
+        }
+    }
+
+    private var standardPhaseIcon: String {
         switch activity.phase {
         case .working: return "sparkles"
         case .thinking: return "brain.head.profile"
         case .usingTool: return "wrench.and.screwdriver"
+        case .usingScreen: return "macwindow"
         case .editing: return "pencil.line"
         }
     }
