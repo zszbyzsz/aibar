@@ -18,9 +18,9 @@ struct ModelBreakdownView: View {
     @State private var hovered: String?
     @Environment(\.appLanguage) private var lang
 
-    static let inputColor = Color(red: 0.165, green: 0.471, blue: 0.839)   // #2a78d6
-    static let cachedColor = Color(red: 0.106, green: 0.686, blue: 0.478) // #1baf7a
-    static let outputColor = Color(red: 0.922, green: 0.408, blue: 0.204) // #eb6834
+    static let inputColor = DashboardSeriesPalette.colors[0]
+    static let cachedColor = DashboardSeriesPalette.colors[2]
+    static let outputColor = DashboardSeriesPalette.colors[1]
 
     /// Fixed, validated 8-hue categorical order (never cycled independently —
     /// each row keeps its rank's color). Run through the dataviz palette
@@ -28,16 +28,7 @@ struct ModelBreakdownView: View {
     /// floor, CVD adjacency (worst ΔE 9.1), and normal-vision floor (worst
     /// ΔE 19.6); three hues sit under 3:1 contrast, which is why every row
     /// still carries the model name in text ink rather than colored text.
-    private static let palette: [Color] = [
-        Color(red: 0.165, green: 0.471, blue: 0.839), // blue   #2a78d6
-        Color(red: 0.922, green: 0.408, blue: 0.204), // orange #eb6834
-        Color(red: 0.106, green: 0.686, blue: 0.478), // aqua   #1baf7a
-        Color(red: 0.929, green: 0.631, blue: 0.000), // yellow #eda100
-        Color(red: 0.910, green: 0.482, blue: 0.643), // magenta#e87ba4
-        Color(red: 0.000, green: 0.514, blue: 0.000), // green  #008300
-        Color(red: 0.290, green: 0.227, blue: 0.655), // violet #4a3aa7
-        Color(red: 0.890, green: 0.286, blue: 0.282), // red    #e34948
-    ]
+    private static let palette = DashboardSeriesPalette.colors
 
     /// Internal identity for the merged "unpriced" row — stable across a
     /// language switch (unlike its displayed label) since it's used for
@@ -201,7 +192,7 @@ private struct ModelRow: View {
                                 .layoutPriority(1)
                             if let price {
                                 Circle()
-                                    .fill(price.status == "live" ? Color(red: 0.290, green: 0.960, blue: 0.580) : Color.notchMutedInk.opacity(0.5))
+                                    .fill(price.status == "live" ? Color.notchSuccess : Color.notchMutedInk.opacity(0.5))
                                     .frame(width: 5, height: 5)
                                     .help(price.status == "live" ? L.liveOfficialPrice(lang) : L.cachedOfflinePrice(lang))
                             }

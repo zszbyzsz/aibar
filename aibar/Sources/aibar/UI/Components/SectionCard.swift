@@ -42,19 +42,6 @@ struct SectionCard<Content: View>: View {
             maxHeight: fixedHeight,
             alignment: .topLeading
         )
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.notchCardHighlight, Color.notchCardFill],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.notchCardBorder, lineWidth: 1)
-        )
+        .dashboardCardSurface()
     }
 }

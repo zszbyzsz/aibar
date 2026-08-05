@@ -20,12 +20,7 @@ struct ProjectListView: View {
     /// Same validated 8-hue order as the model list (first 4 slots), so a
     /// project and a model never accidentally share a color language while
     /// meaning different things.
-    private static let palette: [Color] = [
-        Color(red: 0.165, green: 0.471, blue: 0.839), // blue   #2a78d6
-        Color(red: 0.922, green: 0.408, blue: 0.204), // orange #eb6834
-        Color(red: 0.106, green: 0.686, blue: 0.478), // aqua   #1baf7a
-        Color(red: 0.929, green: 0.631, blue: 0.000), // yellow #eda100
-    ]
+    private static let palette = Array(DashboardSeriesPalette.colors.prefix(4))
 
     var body: some View {
         if projects.isEmpty {
@@ -73,14 +68,7 @@ private struct ProjectRow: View {
     var toggleExpansion: () -> Void
     @Environment(\.appLanguage) private var lang
 
-    private static let modelPalette: [Color] = [
-        Color(red: 0.165, green: 0.471, blue: 0.839),
-        Color(red: 0.922, green: 0.408, blue: 0.204),
-        Color(red: 0.106, green: 0.686, blue: 0.478),
-        Color(red: 0.929, green: 0.631, blue: 0.000),
-        Color(red: 0.910, green: 0.482, blue: 0.643),
-        Color(red: 0.290, green: 0.227, blue: 0.655),
-    ]
+    private static let modelPalette = Array(DashboardSeriesPalette.colors.prefix(6))
 
     private func modelColor(at index: Int) -> Color {
         Self.modelPalette[index % Self.modelPalette.count]

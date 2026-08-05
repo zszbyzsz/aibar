@@ -259,10 +259,10 @@ struct UsageChartView: View {
         HeatmapRGB(red: 0.030, green: 0.510, blue: 1.000),
         HeatmapRGB(red: 0.040, green: 0.690, blue: 0.980),
     ]
-    private static let endColor = Color(red: 1.000, green: 0.280, blue: 0.340)
-    private static let weeklyResetColor = Color(red: 1.000, green: 0.720, blue: 0.160)
-    private static let resetUrgentColor = Color(red: 1.000, green: 0.280, blue: 0.340)
-    private static let resetScheduledColor = Color(red: 1.000, green: 0.620, blue: 0.160)
+    private static let endColor = Color.notchDanger
+    private static let weeklyResetColor = Color.notchCaution
+    private static let resetUrgentColor = Color.notchDanger
+    private static let resetScheduledColor = Color.notchWarning
 
     private var daily: [DailyPoint] { timeline.points }
 

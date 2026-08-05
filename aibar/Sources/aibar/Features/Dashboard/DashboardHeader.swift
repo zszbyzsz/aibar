@@ -28,8 +28,8 @@ struct DashboardHeader: View {
 
     private var subscriptionBadgeColor: Color {
         guard let days = daysRemaining else { return Color.notchMutedInk }
-        if days <= 3 { return Color(red: 1.000, green: 0.380, blue: 0.420) }
-        if days <= 10 { return Color(red: 1.000, green: 0.720, blue: 0.220) }
+        if days <= 3 { return .notchDanger }
+        if days <= 10 { return .notchCaution }
         return Color.notchAccent
     }
 

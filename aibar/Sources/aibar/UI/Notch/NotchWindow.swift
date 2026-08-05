@@ -412,10 +412,17 @@ private struct RootView: View {
 
 private struct NotchCardBackground: View {
     var body: some View {
-        // Flat, fully opaque black — no blur, no tint, no border. This is
-        // what makes the panel read as one continuous black surface with the
-        // physical notch above it rather than a separate card that merely
-        // sits nearby.
-        Color.black
+        // The first part remains true black so it joins the physical notch
+        // without a seam. A nearly imperceptible lift toward the content area
+        // reduces the hard black-on-card contrast on bright displays.
+        LinearGradient(
+            stops: [
+                .init(color: .black, location: 0),
+                .init(color: .black, location: 0.08),
+                .init(color: .notchCanvas, location: 1),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 }

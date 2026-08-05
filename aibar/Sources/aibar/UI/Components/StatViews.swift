@@ -21,7 +21,7 @@ struct CompactStat: View {
 
     private var trendColor: Color {
         guard let trend, judged else { return .notchMutedInk }
-        return trend.up ? Color(red: 1.000, green: 0.380, blue: 0.420) : Color(red: 0.290, green: 0.960, blue: 0.580)
+        return trend.up ? .notchDanger : .notchSuccess
     }
 
     var body: some View {

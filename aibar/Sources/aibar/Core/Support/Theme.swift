@@ -23,30 +23,82 @@ extension Animation {
     static let notchSpring = Animation.timingCurve(0.32, 1.08, 0.15, 1, duration: 0.28)
 }
 
-// Dark "tech" palette: true-black cards (flush with the physical notch),
-// off-white ink, electric-blue accent.
+// Calm dark dashboard palette. The panel stays true black where it meets the
+// physical notch, while content surfaces use a restrained blue-grey lift. The
+// small luminance steps are intentional: enough separation to scan the board,
+// without turning every card into a bright outlined box.
 extension Color {
-    static let notchInk = Color(red: 0.902, green: 0.933, blue: 0.960)
-    static let notchMutedInk = Color(red: 0.561, green: 0.616, blue: 0.667)
-    static let notchRule = Color.white.opacity(0.09)
-    static let notchAccent = Color(red: 0.039, green: 0.518, blue: 1.000)
+    static let notchCanvas = Color(red: 0.018, green: 0.023, blue: 0.030)
+    static let notchInk = Color(red: 0.914, green: 0.937, blue: 0.958)
+    static let notchMutedInk = Color(red: 0.610, green: 0.655, blue: 0.702)
+    static let notchSubtleInk = Color(red: 0.440, green: 0.482, blue: 0.526)
+    static let notchRule = Color.white.opacity(0.075)
+    static let notchAccent = Color(red: 0.235, green: 0.584, blue: 0.957)
     /// A violet signal reserved for visible screen control. Keeping it out of
     /// the normal blue activity palette makes this state legible even before
     /// the phase label is read.
-    static let notchScreenAccent = Color(red: 0.690, green: 0.455, blue: 1.000)
-    static let notchAccentSoft = Color(red: 0.039, green: 0.518, blue: 1.000).opacity(0.16)
-    static let notchTealSoft = Color(red: 0.039, green: 0.518, blue: 1.000).opacity(0.35)
-    static let notchCardFill = Color(red: 0.078, green: 0.090, blue: 0.110)
+    static let notchScreenAccent = Color(red: 0.655, green: 0.475, blue: 0.945)
+    static let notchAccentSoft = Color.notchAccent.opacity(0.14)
+    static let notchTealSoft = Color.notchAccent.opacity(0.30)
+    static let notchCardFill = Color(red: 0.063, green: 0.078, blue: 0.098)
     /// A slightly lifted top tone gives cards depth against the true-black
     /// panel without introducing a separate surface color or visible gloss.
-    static let notchCardHighlight = Color(red: 0.095, green: 0.110, blue: 0.137)
+    static let notchCardHighlight = Color(red: 0.082, green: 0.102, blue: 0.129)
     /// Shared border treatment for metric and section cards. The neutral edge
     /// stays legible on every display while the blue tint preserves the app's
     /// existing identity without outlining every card too loudly.
-    static let notchCardBorder = Color.white.opacity(0.10)
+    static let notchCardBorder = Color.white.opacity(0.085)
     /// Track background for meters/bars — a faint white wash reads as a
     /// recessed groove against the dark card fill.
-    static let notchTrack = Color.white.opacity(0.08)
+    static let notchTrack = Color.white.opacity(0.09)
+
+    // Semantic state colors are deliberately shared by quotas, trends,
+    // badges, activity states, and timeline markers. A state should never
+    // change hue just because it appears in a different card.
+    static let notchDanger = Color(red: 0.957, green: 0.349, blue: 0.396)
+    static let notchWarning = Color(red: 0.957, green: 0.596, blue: 0.220)
+    static let notchCaution = Color(red: 0.941, green: 0.769, blue: 0.294)
+    static let notchSuccess = Color(red: 0.275, green: 0.792, blue: 0.518)
+}
+
+/// One measured surface treatment for every dashboard card. Centralizing the
+/// gradient and edge prevents near-identical cards from drifting in brightness
+/// as individual features evolve.
+enum DashboardSurface {
+    static let cornerRadius: CGFloat = 14
+    static let cardGradient = LinearGradient(
+        colors: [Color.notchCardHighlight, Color.notchCardFill],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+}
+
+extension View {
+    func dashboardCardSurface(cornerRadius: CGFloat = DashboardSurface.cornerRadius) -> some View {
+        background(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(DashboardSurface.cardGradient)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(Color.notchCardBorder, lineWidth: 1)
+        )
+    }
+}
+
+/// Color-blind-friendly categorical sequence used consistently for models,
+/// projects, and their composition bars. Semantic state colors stay separate.
+enum DashboardSeriesPalette {
+    static let colors: [Color] = [
+        .notchAccent,
+        Color(red: 0.941, green: 0.486, blue: 0.310),
+        Color(red: 0.224, green: 0.769, blue: 0.565),
+        Color(red: 0.847, green: 0.694, blue: 0.286),
+        Color(red: 0.855, green: 0.475, blue: 0.655),
+        Color(red: 0.220, green: 0.694, blue: 0.776),
+        Color(red: 0.541, green: 0.486, blue: 0.922),
+        Color(red: 0.886, green: 0.392, blue: 0.420),
+    ]
 }
 
 /// Shared five-stage quota palette. Keeping the thresholds here ensures the
@@ -57,13 +109,13 @@ enum QuotaStatusPalette {
 
         switch remaining {
         case ...10:
-            return Color(red: 1.000, green: 0.380, blue: 0.420) // urgent red
+            return .notchDanger
         case ...25:
-            return Color(red: 1.000, green: 0.580, blue: 0.180) // orange
+            return .notchWarning
         case ...45:
-            return Color(red: 1.000, green: 0.800, blue: 0.220) // yellow
+            return .notchCaution
         case ...70:
-            return Color(red: 0.220, green: 0.840, blue: 0.510) // green
+            return .notchSuccess
         default:
             return normal // blue / style accent
         }

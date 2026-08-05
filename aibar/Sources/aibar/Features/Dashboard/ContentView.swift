@@ -106,20 +106,7 @@ struct DashboardView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.notchCardHighlight, Color.notchCardFill],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.notchCardBorder, lineWidth: 1)
-        )
+        .dashboardCardSurface()
 
         SectionCard(
             title: L.usageOverviewTitle(lang),
@@ -204,13 +191,13 @@ struct DashboardView: View {
         if let error = data.error {
             Label(error, systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(Color(red: 1.000, green: 0.720, blue: 0.220))
+                .foregroundStyle(Color.notchCaution)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 9)
-                        .fill(Color(red: 1.000, green: 0.720, blue: 0.220).opacity(0.09))
+                        .fill(Color.notchCaution.opacity(0.09))
                 )
         }
     }

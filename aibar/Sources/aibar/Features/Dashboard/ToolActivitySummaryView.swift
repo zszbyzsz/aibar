@@ -12,7 +12,7 @@ struct MCPActivityCard: View {
     @Environment(\.appLanguage) private var lang
 
     private static let callsColor = Color.notchAccent
-    private static let editsColor = Color(red: 0.922, green: 0.408, blue: 0.204)
+    private static let editsColor = DashboardSeriesPalette.colors[1]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -75,20 +75,7 @@ struct MCPActivityCard: View {
             }
         }
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.notchCardHighlight, Color.notchCardFill],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.notchCardBorder, lineWidth: 1)
-        )
+        .dashboardCardSurface()
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             L.mcpCallsAndEdits(

@@ -148,7 +148,7 @@ private struct CompletionSummaryPillContent: View {
         HStack(spacing: 6) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color(red: 0.290, green: 0.960, blue: 0.580))
+                .foregroundStyle(Color.notchSuccess)
             Text(L.activityCompletionSummary(lang))
                 .font(.system(size: 11, weight: .semibold))
                 .lineLimit(1)
@@ -164,7 +164,7 @@ private struct UpdatePillContent: View {
     var notice: AppUpdateNotice
     var lang: AppLanguage
 
-    private let tint = Color(red: 1.000, green: 0.650, blue: 0.180)
+    private let tint = Color.notchWarning
 
     var body: some View {
         HStack(spacing: 6) {
@@ -287,8 +287,8 @@ private struct CompletedPillContent: View {
 
     private var tint: Color {
         switch outcome {
-        case .completed: return Color(red: 0.290, green: 0.960, blue: 0.580)
-        case .aborted: return Color(red: 0.980, green: 0.400, blue: 0.400)
+        case .completed: return .notchSuccess
+        case .aborted: return .notchDanger
         case .timedOut: return Color.notchMutedInk
         }
     }
@@ -371,7 +371,7 @@ private extension View {
                 Capsule()
                     .fill(
                         isUpdate
-                            ? Color(red: 0.125, green: 0.082, blue: 0.025)
+                            ? Color.notchWarning.opacity(0.11)
                             : isScreenControl
                                 ? Color(red: 0.095, green: 0.062, blue: 0.145)
                                 : Color.black
@@ -379,7 +379,7 @@ private extension View {
                     .overlay {
                         Capsule().strokeBorder(
                             isUpdate
-                                ? Color(red: 1.000, green: 0.650, blue: 0.180)
+                                ? Color.notchWarning
                                     .opacity(isHighlighted ? 0.65 : 0.32)
                                 : isScreenControl
                                     ? Color.notchScreenAccent.opacity(isHighlighted ? 0.82 : 0.48)
