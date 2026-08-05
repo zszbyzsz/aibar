@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="aibar"
 BUNDLE_ID="${BUNDLE_ID:-com.aibar.app}"
-APP_VERSION="${APP_VERSION:-0.1.10}"
+APP_VERSION="${APP_VERSION:-0.1.11}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 BUILD_DIR="$ROOT/.build/release"
 APP_DIR="$ROOT/dist/$APP_NAME.app"

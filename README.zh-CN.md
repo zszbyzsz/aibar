@@ -6,7 +6,7 @@
 
 aibar 是一款本地优先的 macOS AI 编程用量仪表盘。它把 Codex 会话记录、配额、项目与模型统计和实时运行状态收进 MacBook 刘海下方与状态栏，并通过 `fn + 4` 提供为 AI 反馈设计的截图标注工具——需要时展开，不需要时保持安静。
 
-> 版本 0.1.10 · macOS 13 Ventura 或更高版本 · Apple Silicon
+> 版本 0.1.11 · macOS 13 Ventura 或更高版本 · Apple Silicon
 
 ![aibar 仪表盘](docs/images/dashboard-zh.png)
 
@@ -14,7 +14,7 @@ aibar 是一款本地优先的 macOS AI 编程用量仪表盘。它把 Codex 会
 
 - **刘海仪表盘与状态栏入口**：把指针移到 MacBook 刘海区域，或点击状态栏的趋势图标即可展开。左键显示／隐藏，右键可访问运行胶囊、截图、检查更新和退出。aibar 不占用 Dock。
 - **准确的用量统计**：今日与 30 天 API 等价费用、30 天 token、最近会话 token 和近期趋势，统一基于本地扫描到的 Codex 会话计算。
-- **用量总览**：90 天 token 强度热图支持悬停查看精确日总量，右侧显示紧凑的 30 天日均 token、reset 额度到期标记，以及会话（5 小时）与周（7 天）配额。
+- **用量总览**：154 天 token 强度热图支持悬停查看精确日总量，右侧显示紧凑的 30 天日均 token、reset 额度到期标记，以及会话（5 小时）与周（7 天）配额。
 - **模型与项目明细**：模型价格、费用、token 占比、输入／缓存／输出单价和项目汇总，都会随当前读取的会话重新计算；定价优先从公开来源刷新，必要时使用本地缓存。
 - **最活跃项目**：本地项目按 token 排序，展开后可查看模型占比、工具调用次数和文件修改次数。
 - **运行状态胶囊**：显示每个 Codex 对话的项目、模型、当前阶段、上下文 token 和耗时。连续运行的对话保留完整累计时间；当 Codex 调用屏幕/桌面工具时，胶囊会用独特的“窗口 + 鼠标指针”标识和紫色高亮区分普通工具调用。悬停可展开多个并行对话，点击可回到对应的 Codex 对话。
@@ -73,11 +73,11 @@ brew update
 brew upgrade --cask aibar
 ```
 
-`v0.1.10` 及更早的安装包使用 Ad-hoc 签名，每个版本的 macOS 隐私身份都不同。升级后若系统提示，请重新授予屏幕录制权限。迁移到首个 Developer ID 签名版本时还需要最后重新授权一次；之后使用同一 Developer ID 发布的更新会继续复用该授权。
+`v0.1.11` 及更早的安装包使用 Ad-hoc 签名，每个版本的 macOS 隐私身份都不同。升级后若系统提示，请重新授予屏幕录制权限。迁移到首个 Developer ID 签名版本时还需要最后重新授权一次；之后使用同一 Developer ID 发布的更新会继续复用该授权。
 
 ### 直接下载安装包
 
-在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.10.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
+在 [Releases](https://github.com/zszbyzsz/aibar/releases) 下载 `aibar-0.1.11.zip`，解压后将 `aibar.app` 拖入“应用程序”文件夹并打开。
 
 请使用同一 Developer ID 签名的正式发布版，以便自动更新后保持屏幕录制授权。若 macOS 阻止首次启动，请在 Finder 中按住 Control 点击应用并选择“打开”；若仍被隔离，可执行：
 
@@ -129,13 +129,13 @@ open dist/aibar.app
 
 ```bash
 SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-  ./scripts/package-release.sh 0.1.10
+  ./scripts/package-release.sh 0.1.11
 ```
 
 若确认可以在升级后重新授权，可通过显式开关生成 Ad-hoc 安装包：
 
 ```bash
-ALLOW_ADHOC_RELEASE=1 ./scripts/package-release.sh 0.1.10
+ALLOW_ADHOC_RELEASE=1 ./scripts/package-release.sh 0.1.11
 ```
 
 ## 许可证

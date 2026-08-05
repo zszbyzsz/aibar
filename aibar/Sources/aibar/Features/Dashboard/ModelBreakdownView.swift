@@ -200,10 +200,10 @@ private struct ModelRow: View {
 
                         pricingLabel
                     }
-
-                    Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     spendingSummary
+                        .fixedSize(horizontal: true, vertical: false)
                 }
 
                 trendAndComposition
@@ -223,11 +223,15 @@ private struct ModelRow: View {
                     .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(Color.notchAccent)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .truncationMode(.tail)
             } else {
                 Text("$\(price.input, specifier: "%.2f")/$\(price.cachedInput, specifier: "%.2f")/$\(price.output, specifier: "%.2f") \(L.per1M(lang))")
                     .font(.system(size: 8.5))
                     .foregroundStyle(Color.notchMutedInk)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                    .truncationMode(.tail)
             }
         } else {
             Text(L.noOfficialPriceMapped(lang))

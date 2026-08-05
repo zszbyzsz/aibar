@@ -6,7 +6,7 @@
 
 A local-first macOS dashboard for AI coding usage. aibar brings Codex session records, quota data, project and model statistics, and live activity into the space beneath your MacBook notch and the menu bar. It also provides an annotation tool designed for AI feedback on `fn + 4`—available when you need it and quiet when you do not.
 
-> Version 0.1.10 · macOS 13 Ventura or later · Apple Silicon
+> Version 0.1.11 · macOS 13 Ventura or later · Apple Silicon
 
 ![aibar dashboard](docs/images/dashboard-en.png)
 
@@ -14,7 +14,7 @@ A local-first macOS dashboard for AI coding usage. aibar brings Codex session re
 
 - **Notch dashboard and menu-bar controls** — Hover over the notch or click the menu-bar trend icon to open the dashboard. Left-click toggles it; right-click exposes the activity capsule, screenshot command, update check, and quit action. aibar does not occupy the Dock.
 - **Accurate usage totals** — Today and 30-day API-equivalent cost, 30-day tokens, latest-session tokens, and recent trends are calculated from the same locally scanned Codex sessions.
-- **Usage overview** — A 90-day token-intensity heatmap includes the exact daily total on hover, a compact 30-day daily token average, reset-credit expiry markers, and session (5h) and weekly (7d) quota meters.
+- **Usage overview** — A 154-day token-intensity heatmap includes the exact daily total on hover, a compact 30-day daily token average, reset-credit expiry markers, and session (5h) and weekly (7d) quota meters.
 - **Model and project breakdowns** — Model pricing, cost, token share, input/cached/output rates, and project totals are recomputed from the loaded sessions. Pricing is refreshed from the public source and falls back to a local cache when necessary.
 - **Top projects** — Local projects are ranked by tokens and expand to show their model shares, tool-call totals, and file-edit totals.
 - **Live activity capsule** — The capsule shows each Codex conversation's project, model, current phase, context tokens, and elapsed time. A continuously running conversation keeps its total elapsed time; screen/desktop tool calls use a distinctive window-plus-cursor marker and violet highlight instead of the generic tool state. Hover to expand simultaneous conversations and click one to return to it in Codex.
@@ -71,11 +71,11 @@ brew update
 brew upgrade --cask aibar
 ```
 
-Packages through `v0.1.10` are ad-hoc signed, so each version has a different macOS privacy identity. After upgrading, grant Screen Recording again if prompted. Moving to the first Developer ID signed release will require one final reauthorization; later releases signed by the same identity will retain that permission.
+Packages through `v0.1.11` are ad-hoc signed, so each version has a different macOS privacy identity. After upgrading, grant Screen Recording again if prompted. Moving to the first Developer ID signed release will require one final reauthorization; later releases signed by the same identity will retain that permission.
 
 ### Download the app
 
-Download `aibar-0.1.10.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
+Download `aibar-0.1.11.zip` from [Releases](https://github.com/zszbyzsz/aibar/releases), unzip it, drag `aibar.app` to Applications, and open it.
 
 Use a release signed consistently with the same Developer ID to preserve Screen Recording consent through automatic updates. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. If it remains quarantined:
 
@@ -127,13 +127,13 @@ open dist/aibar.app
 
 ```bash
 SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-  ./scripts/package-release.sh 0.1.10
+  ./scripts/package-release.sh 0.1.11
 ```
 
 An Ad-hoc package can be produced only through an explicit opt-in when privacy reauthorization is acceptable:
 
 ```bash
-ALLOW_ADHOC_RELEASE=1 ./scripts/package-release.sh 0.1.10
+ALLOW_ADHOC_RELEASE=1 ./scripts/package-release.sh 0.1.11
 ```
 
 ## License

@@ -56,7 +56,9 @@ struct MCPActivityCard: View {
 
                 Spacer(minLength: 0)
 
-                ToolHeatmapLegend()
+                if lang == .en {
+                    ToolHeatmapLegend()
+                }
 
                 Text(L.last30Days(lang))
                     .font(.system(size: 10.5))
@@ -71,7 +73,17 @@ struct MCPActivityCard: View {
                     .foregroundStyle(Color.notchMutedInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                MCPUsageHeatmap(servers: servers)
+                if lang == .zh {
+                    HStack(alignment: .top, spacing: 12) {
+                        MCPUsageHeatmap(servers: servers)
+                            .layoutPriority(1)
+                        ToolHeatmapLegend()
+                            .fixedSize()
+                            .padding(.top, 1)
+                    }
+                } else {
+                    MCPUsageHeatmap(servers: servers)
+                }
             }
         }
         .padding(12)
