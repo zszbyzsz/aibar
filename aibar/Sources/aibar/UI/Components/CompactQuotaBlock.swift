@@ -12,29 +12,41 @@ struct CompactQuotaBlock: View {
     var isNarrow: Bool = false
     @Environment(\.appLanguage) private var lang
 
+    private var remaining: Int? {
+        guard let used = limit?.usedPercent else { return nil }
+        return max(0, Int((100 - used).rounded()))
+    }
+
+    private var accentColor: Color {
+        QuotaStatusPalette.color(
+            remaining: remaining,
+            normal: .notchAccent,
+            unavailable: .notchMutedInk
+        )
+    }
+
     @ViewBuilder
     var body: some View {
         if isNarrow {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("\(title)\(lang == .zh ? "：" : ":")")
-                    .font(.system(size: 11.5, weight: .bold))
-                    .foregroundStyle(Color.notchInk)
-                    .lineLimit(1)
+            HStack(alignment: .center, spacing: 9) {
+                QuotaMeterView(limit: limit, icon: icon, isCompact: true)
 
-                HStack(alignment: .center, spacing: 10) {
-                    // Keep the quota itself anchored to the left so the larger
-                    // refresh readout can use the full remaining width instead
-                    // of being squeezed into the title row.
-                    QuotaMeterView(limit: limit, icon: icon, isCompact: true)
+                TimelineView(.periodic(from: .now, by: 20)) { context in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(title)\(lang == .zh ? "：" : ":")")
+                            .font(.system(size: 11.5, weight: .bold))
+                            .foregroundStyle(Color.notchInk)
+                            .lineLimit(1)
 
-                    TimelineView(.periodic(from: .now, by: 20)) { context in
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Label(
                                 L.remainingWord(lang),
                                 systemImage: "arrow.triangle.2.circlepath"
                             )
                             .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(Color.notchMutedInk)
+                            .foregroundStyle(accentColor.opacity(0.82))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
 
                             Text(
                                 Formatting.refreshRemainingDurationLabel(
@@ -47,14 +59,14 @@ struct CompactQuotaBlock: View {
                             .monospacedDigit()
                             .foregroundStyle(Color.notchInk)
                             .lineLimit(2)
-                            .minimumScaleFactor(0.75)
+                            .minimumScaleFactor(0.72)
                             .fixedSize(horizontal: false, vertical: true)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity)
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {

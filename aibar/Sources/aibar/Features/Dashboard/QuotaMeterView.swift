@@ -123,14 +123,14 @@ struct QuotaMeterView: View {
     private var compactMeter: some View {
         ZStack {
             Circle()
-                .fill(ringColor.opacity(0.14))
-                .blur(radius: 9)
-                .opacity(remaining == nil ? 0 : 0.55)
+                .fill(ringColor.opacity(0.16))
+                .blur(radius: 8)
+                .opacity(remaining == nil ? 0 : 0.58)
             Circle()
-                .stroke(Color.notchTrack, lineWidth: 6)
+                .stroke(Color.notchInk.opacity(0.16), lineWidth: 6)
             if let remaining {
                 RingWaterFill(percent: remaining, color: ringColor)
-                    .frame(width: 49, height: 49)
+                    .frame(width: 42, height: 42)
                     .clipShape(Circle())
             }
             Circle()
@@ -138,17 +138,34 @@ struct QuotaMeterView: View {
                 .stroke(ringColor, style: StrokeStyle(lineWidth: 6, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             if let remaining {
-                Text("\(remaining)%")
-                    .font(.system(size: 16.5, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(ringColor)
+                outlinedCompactPercentage(remaining)
             } else {
                 Image(systemName: "moon.zzz.fill")
                     .font(.system(size: 14))
                     .foregroundStyle(Color.notchMutedInk)
             }
         }
-        .frame(width: 68, height: 68)
+        .frame(width: 60, height: 60)
+    }
+
+    /// The percentage stays inside the dial, where it belongs semantically,
+    /// but gets an explicit dark outline so the animated water fill cannot
+    /// visually swallow the number at a glance.
+    @ViewBuilder
+    private func outlinedCompactPercentage(_ remaining: Int) -> some View {
+        let label = Text("\(remaining)%")
+            .font(.system(size: 16.5, weight: .heavy, design: .rounded))
+            .monospacedDigit()
+
+        ZStack {
+            label.foregroundStyle(Color.black.opacity(0.9)).offset(x: -1, y: 0)
+            label.foregroundStyle(Color.black.opacity(0.9)).offset(x: 1, y: 0)
+            label.foregroundStyle(Color.black.opacity(0.9)).offset(x: 0, y: -1)
+            label.foregroundStyle(Color.black.opacity(0.9)).offset(x: 0, y: 1)
+            label
+                .foregroundStyle(ringColor)
+                .shadow(color: Color.white.opacity(0.16), radius: 1)
+        }
     }
 
     var body: some View {

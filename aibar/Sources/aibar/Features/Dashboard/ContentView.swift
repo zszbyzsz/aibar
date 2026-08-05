@@ -9,15 +9,6 @@ struct IdleHotzoneView: View {
     }
 }
 
-/// Reports a view's natural laid-out height up to `NotchWindowController`,
-/// which resizes the panel to match — see `DashboardView.body`'s measuring
-/// background. `reduce` keeps the latest value; nothing here ever reports
-/// more than one height per frame, so first-wins-or-last doesn't matter.
-private struct ContentHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
 struct DashboardView: View {
     @ObservedObject var store: UsageStore
     @State private var usageTimelineStatus: String?
@@ -55,13 +46,14 @@ struct DashboardView: View {
     private var tokenTrend: (percent: Int, up: Bool)? { trend { Double($0.tokens) } }
 
     var body: some View {
+        // This view must remain the measured, intrinsic content rather than a
+        // scroll viewport. `RootView` owns the scroll view so this preference
+        // always reports the full dashboard height to the native panel.
         VStack(alignment: .leading, spacing: 12) {
             DashboardHeader(store: store, onPopoverStateChange: onPopoverStateChange)
             // Attribution is deliberately a two-column desktop group: models
             // need the wider side for pricing and the expanded trend, while
-            // projects stay scannable in a narrower companion list. Both
-            // lists cap themselves at three visible rows, so panel height
-            // stays bounded (see `NotchWindowController.setContentHeight`).
+            // projects stay scannable in a narrower companion list.
             sections
         }
         .environment(\.appLanguage, lang)
@@ -73,24 +65,30 @@ struct DashboardView: View {
         .padding(.horizontal, 18)
         .padding(.bottom, 18)
         .padding(.top, 8)
-        // Without this, the background GeometryReader below reports whatever
-        // height the hosting NSPanel currently happens to be (it stretches to
-        // fill any proposed size), not this content's own ideal height — which
-        // defeats the measurement entirely since the panel's height is exactly
-        // the thing being decided from that measurement. Fixing vertical sizing
-        // here forces SwiftUI to compute and use the real ideal height instead.
         .fixedSize(horizontal: false, vertical: true)
         .background(
             GeometryReader { geo in
-                Color.clear.preference(key: ContentHeightKey.self, value: geo.size.height)
+                Color.clear
+                    .onAppear { reportContentHeight(geo.size.height) }
+                    .onChange(of: geo.size.height) { reportContentHeight($0) }
             }
         )
-        .onPreferenceChange(ContentHeightKey.self) { onHeightChange($0) }
     }
 
-    /// Everything below the header — wrapped in the outer `ScrollView` in
-    /// `body` above so it can outgrow the fixed window height without losing
-    /// cards off the bottom edge.
+    /// A direct geometry callback is deliberately used instead of a
+    /// `PreferenceKey`: SwiftUI's `ScrollView` may consume child preferences
+    /// before they reach the hosting panel, leaving the panel at its initial
+    /// 320pt opening height. Deferring one turn avoids updating AppKit while
+    /// SwiftUI is still performing the current layout pass.
+    private func reportContentHeight(_ height: CGFloat) {
+        guard height > 0 else { return }
+        DispatchQueue.main.async {
+            onHeightChange(height)
+        }
+    }
+
+    /// Everything below the header. The outer scroll view in `body` retains
+    /// access to this content when it exceeds the dashboard's height cap.
     @ViewBuilder
     private var sections: some View {
         // The four stat numbers' flat strip now opens the dashboard — it used
@@ -141,7 +139,7 @@ struct DashboardView: View {
                     onStatusChange: { usageTimelineStatus = $0 }
                 )
 
-                VStack(spacing: 0) {
+                EqualVerticalLayout(spacing: 0) {
                     CompactQuotaBlock(
                         title: L.dailyLabel(lang), icon: "gauge",
                         hint: nil,
@@ -266,6 +264,62 @@ struct DashboardView: View {
                 ProjectListView(projects: data.topProjects)
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
+/// Divides the quota sidebar into two exact vertical tracks. The compact
+/// blocks intentionally keep their own natural height; this layout centers
+/// each one in its half so changing title placement or copy height cannot
+/// leave the rows anchored to stale coordinates.
+private struct EqualVerticalLayout: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard !subviews.isEmpty else { return .zero }
+
+        if let height = proposal.height {
+            let naturalWidth = subviews.map {
+                $0.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)).width
+            }.max() ?? 0
+            return CGSize(width: proposal.width ?? naturalWidth, height: height)
+        }
+
+        let sizes = subviews.map {
+            $0.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        }
+        let rowHeight = sizes.map(\.height).max() ?? 0
+        let totalSpacing = spacing * CGFloat(max(0, subviews.count - 1))
+        return CGSize(
+            width: proposal.width ?? (sizes.map(\.width).max() ?? 0),
+            height: rowHeight * CGFloat(subviews.count) + totalSpacing
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard !subviews.isEmpty else { return }
+
+        let totalSpacing = spacing * CGFloat(max(0, subviews.count - 1))
+        let rowHeight = max(0, (bounds.height - totalSpacing) / CGFloat(subviews.count))
+
+        for (index, subview) in subviews.enumerated() {
+            let centerY = bounds.minY
+                + CGFloat(index) * (rowHeight + spacing)
+                + rowHeight / 2
+            subview.place(
+                at: CGPoint(x: bounds.midX, y: centerY),
+                anchor: .center,
+                proposal: ProposedViewSize(width: bounds.width, height: rowHeight)
+            )
         }
     }
 }

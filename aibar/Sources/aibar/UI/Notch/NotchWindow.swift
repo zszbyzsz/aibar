@@ -9,6 +9,7 @@ import Combine
 @MainActor
 final class NotchWindowController: NSObject, ObservableObject {
     private let panel: NSPanel
+    private var hostingView: NSHostingView<RootView>?
     let usageStore: UsageStore
     private var store: UsageStore { usageStore }
     // @Published (not a plain var) is what actually makes SwiftUI re-render RootView
@@ -26,18 +27,16 @@ final class NotchWindowController: NSObject, ObservableObject {
     // (screen changes), not on every content-height update.
     private var screenMidX: CGFloat = 0
     private var screenMaxY: CGFloat = 0
-    private var screenHeight: CGFloat = 0
 
-    // Width stays fixed — only height follows the dashboard's actual content
-    // (see `setContentHeight`, fed by `DashboardView`'s own measurement), so
-    // the panel never shows dead space below a shorter layout, or clips a
-    // taller one. Model-breakdown and top-projects each cap their own inner
-    // list height, so real content is already bounded well under the screen;
-    // the screen-height clamp in `expandedFrameRect(forHeight:)` is just a
-    // hard backstop against the display itself, not a size anything is
-    // expected to reach.
-    private static let expandedWidth: CGFloat = 720
-    private static let minExpandedHeight: CGFloat = 320
+    // Width stays fixed; height follows the dashboard's complete natural
+    // content. There is deliberately no whole-dashboard height cap or outer
+    // scroll view: the panel itself expands to contain the dashboard.
+    /// Kept file-visible so `RootView` can lay the dashboard out at its final
+    /// width even while the native window is still growing from the notch.
+    /// Otherwise every animation frame proposes a different text width,
+    /// continuously changing the measured height and retargeting the window.
+    fileprivate static let expandedWidth: CGFloat = 720
+    private static let initialExpandedHeight: CGFloat = 320
     private static let idleFallbackSize = CGSize(width: 170, height: 34)
 
     private var closeWorkItem: DispatchWorkItem?
@@ -85,6 +84,7 @@ final class NotchWindowController: NSObject, ObservableObject {
         hostView.onMouseEntered = { [weak self] in self?.setExpanded(true) }
         hostView.onMouseExited = { [weak self] in self?.scheduleAutoClose() }
         let hosting = NSHostingView(rootView: rootView())
+        hostingView = hosting
         hosting.translatesAutoresizingMaskIntoConstraints = false
         hostView.addSubview(hosting)
         NSLayoutConstraint.activate([
@@ -104,7 +104,7 @@ final class NotchWindowController: NSObject, ObservableObject {
         store.start()
     }
 
-    private func rootView() -> some View {
+    private func rootView() -> RootView {
         RootView(store: store, controller: self)
     }
 
@@ -129,7 +129,16 @@ final class NotchWindowController: NSObject, ObservableObject {
     /// open so a resize mid-visit still glides instead of jumping.
     func setContentHeight(_ height: CGFloat) {
         guard height > 0 else { return }
-        expandedFrame = expandedFrameRect(forHeight: height)
+        // GeometryReader can report the same layout with tiny floating-point
+        // differences while AppKit is animating the panel. Pixel-align and
+        // ignore equivalent frames so one content change produces one resize.
+        let scale = panel.screen?.backingScaleFactor
+            ?? NotchGeometry.targetScreen()?.backingScaleFactor
+            ?? 1
+        let alignedHeight = ceil(height * scale) / scale
+        let newFrame = expandedFrameRect(forHeight: alignedHeight)
+        guard abs(newFrame.height - expandedFrame.height) >= 1 / scale else { return }
+        expandedFrame = newFrame
         guard isExpanded else { return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.28
@@ -139,8 +148,7 @@ final class NotchWindowController: NSObject, ObservableObject {
     }
 
     private func expandedFrameRect(forHeight height: CGFloat) -> CGRect {
-        let screenLimit = max(Self.minExpandedHeight, screenHeight - 40)
-        let clamped = min(max(height, Self.minExpandedHeight), screenLimit)
+        let clamped = max(height, 1)
         return CGRect(
             x: screenMidX - Self.expandedWidth / 2, y: screenMaxY - clamped,
             width: Self.expandedWidth, height: clamped
@@ -210,12 +218,12 @@ final class NotchWindowController: NSObject, ObservableObject {
 
         screenMidX = frame.midX
         screenMaxY = frame.maxY
-        screenHeight = frame.height
         // No content-height measurement has come in yet on the very first
         // call (the dashboard isn't even mounted until the first hover), so
-        // this starts at the min height — `setContentHeight` corrects it to
-        // the real size moments after the first expand.
-        let priorHeight = expandedFrame == .zero ? Self.minExpandedHeight : expandedFrame.height
+        // this starts with a compact provisional height — `setContentHeight`
+        // replaces it with the measured content height immediately after the
+        // dashboard mounts.
+        let priorHeight = expandedFrame == .zero ? Self.initialExpandedHeight : expandedFrame.height
         expandedFrame = expandedFrameRect(forHeight: priorHeight)
     }
 
@@ -270,6 +278,17 @@ final class NotchWindowController: NSObject, ObservableObject {
         } else {
             store.stopVisibleCodexRefresh()
         }
+
+        if expanded {
+            // Give the new SwiftUI tree one layout turn, then use its AppKit
+            // intrinsic height as a fallback if the geometry callback has not
+            // arrived yet. This avoids pinning the panel to its temporary
+            // opening frame without imposing a height cap or page scrolling.
+            DispatchQueue.main.async { [weak self] in
+                self?.hostingView?.layoutSubtreeIfNeeded()
+                self?.setContentHeight(self?.hostingView?.fittingSize.height ?? 0)
+            }
+        }
     }
 
     /// A short grace period after the pointer leaves — long enough to cross a gap
@@ -278,9 +297,25 @@ final class NotchWindowController: NSObject, ObservableObject {
     private func scheduleAutoClose() {
         guard !keepsDashboardOpen, !isPopoverOpen else { return }
         closeWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.setExpanded(false) }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.isExpanded,
+                  !self.keepsDashboardOpen,
+                  !self.isPopoverOpen,
+                  !self.isPointerInsidePanel
+            else { return }
+            self.setExpanded(false)
+        }
         closeWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+    }
+
+    /// Tracking areas may emit a transient exit while their window is being
+    /// resized. The global cursor position is authoritative at close time; a
+    /// one-point tolerance also prevents edge pixels from oscillating between
+    /// inside and outside on Retina displays.
+    private var isPointerInsidePanel: Bool {
+        panel.frame.insetBy(dx: -1, dy: -1).contains(NSEvent.mouseLocation)
     }
 
     /// Status-item opening has no reliable corresponding exit event because
@@ -295,7 +330,7 @@ final class NotchWindowController: NSObject, ObservableObject {
                   self.isExpanded,
                   !self.keepsDashboardOpen,
                   !self.isPopoverOpen,
-                  !self.panel.frame.contains(NSEvent.mouseLocation)
+                  !self.isPointerInsidePanel
             else { return }
             self.setExpanded(false)
         }
@@ -313,9 +348,12 @@ private final class HoverTrackingView: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
+        // `.inVisibleRect` follows bounds changes automatically. Recreating
+        // the area on every animation frame generates synthetic enter/exit
+        // pairs and can make the notch repeatedly open and close.
+        guard trackingArea == nil else { return }
         let area = NSTrackingArea(
-            rect: bounds,
+            rect: .zero,
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self, userInfo: nil
         )
@@ -339,11 +377,14 @@ private struct RootView: View {
                     onHeightChange: { controller.setContentHeight($0) },
                     onPopoverStateChange: { controller.setPopoverOpen($0) }
                 )
-                    // The dashboard has an intrinsic height which can change
-                    // when localized copy reflows. Pin it to the top of the
-                    // hosting panel so a shorter English layout cannot be
-                    // vertically centered and leave a dead band below the
-                    // notch while the AppKit frame catches up.
+                    // Measure localized text at the final dashboard width from
+                    // the first layout pass. During the native grow animation
+                    // the window simply clips this stable layout horizontally.
+                    .frame(width: NotchWindowController.expandedWidth)
+                    // Fill and top-align the whole hosting panel. In particular,
+                    // English copy is often shorter than Chinese; without this
+                    // outer frame SwiftUI centers the shorter black surface and
+                    // exposes a transparent seam directly below the notch.
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .background(NotchCardBackground())
                     .clipShape(NotchShape.attached())
