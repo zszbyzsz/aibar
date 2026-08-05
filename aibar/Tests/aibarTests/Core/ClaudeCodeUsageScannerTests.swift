@@ -13,7 +13,7 @@ final class ClaudeCodeUsageScannerTests: XCTestCase {
     func testParseSessionSumsUsageAndCountsFileEditingToolsOnly() throws {
         let lines = [
             #"{"type":"user","cwd":"/Users/x/my-project","timestamp":"2026-07-20T09:00:00Z"}"#,
-            #"{"type":"assistant","timestamp":"2026-07-20T09:01:00Z","message":{"model":"claude-sonnet-5-20250929","usage":{"input_tokens":1000,"cache_read_input_tokens":200,"cache_creation_input_tokens":50,"output_tokens":300},"content":[{"type":"tool_use","name":"Edit"},{"type":"tool_use","name":"Bash"}]}}"#,
+            #"{"type":"assistant","timestamp":"2026-07-20T09:01:00Z","message":{"model":"claude-sonnet-5-20250929","usage":{"input_tokens":1000,"cache_read_input_tokens":200,"cache_creation_input_tokens":50,"output_tokens":300},"content":[{"type":"tool_use","name":"Edit"},{"type":"tool_use","name":"mcp__figma__get_design_context"}]}}"#,
         ]
         let url = try writeFixture(lines)
         let scanner = ClaudeCodeUsageScanner()
@@ -34,6 +34,8 @@ final class ClaudeCodeUsageScannerTests: XCTestCase {
         // Both tool_use blocks count as tool calls, but only Edit is a file-changing tool.
         XCTAssertEqual(summary.toolCallCount, 2)
         XCTAssertEqual(summary.filesChangedCount, 1)
+        XCTAssertEqual(summary.mcpCallCount, 1)
+        XCTAssertEqual(summary.mcpUsage, ["figma": 1])
     }
 
     func testParseSessionReturnsNilWhenNoAssistantUsageEventsPresent() throws {

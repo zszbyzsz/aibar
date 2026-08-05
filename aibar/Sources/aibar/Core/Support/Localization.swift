@@ -287,14 +287,14 @@ enum L {
     static func pricingOffline(_ lang: AppLanguage) -> String {
         lang == .zh ? "缓存费率" : "Cached rates"
     }
-    static func toolCallsAndEdits(_ lang: AppLanguage, calls: Int, edits: Int) -> String {
-        lang == .zh ? "\(calls) 次调用 · \(edits) 次修改" : "\(calls) tool calls · \(edits) file edits"
+    static func mcpCallsAndEdits(_ lang: AppLanguage, calls: Int, edits: Int) -> String {
+        lang == .zh ? "\(calls) 次 MCP 调用 · \(edits) 次修改" : "\(calls) MCP calls · \(edits) file edits"
     }
-    static func toolActivityTitle(_ lang: AppLanguage) -> String {
-        lang == .zh ? "工具" : "Tools"
+    static func mcpActivityTitle(_ lang: AppLanguage) -> String {
+        "MCP"
     }
-    static func toolCallsTitle(_ lang: AppLanguage) -> String {
-        lang == .zh ? "调用" : "Calls"
+    static func mcpCallsTitle(_ lang: AppLanguage) -> String {
+        lang == .zh ? "MCP 调用" : "MCP Calls"
     }
     static func filesChangedTitle(_ lang: AppLanguage) -> String {
         lang == .zh ? "修改" : "Edits"
@@ -302,8 +302,17 @@ enum L {
     static func last30Days(_ lang: AppLanguage) -> String {
         lang == .zh ? "30 天" : "30d"
     }
-    static func noToolActivity(_ lang: AppLanguage) -> String {
-        lang == .zh ? "暂无按工具的使用明细" : "No per-tool activity captured yet"
+    static func noMCPActivity(_ lang: AppLanguage) -> String {
+        lang == .zh ? "暂无 MCP 调用记录" : "No MCP activity captured yet"
+    }
+    static func toolHeatmapHint(_ lang: AppLanguage) -> String {
+        lang == .zh ? "方格亮度表示调用次数" : "Square brightness shows call volume"
+    }
+    static func toolHeatmapLow(_ lang: AppLanguage) -> String {
+        lang == .zh ? "少" : "Low"
+    }
+    static func toolHeatmapHigh(_ lang: AppLanguage) -> String {
+        lang == .zh ? "多" : "High"
     }
     static func activityFlowTitle(_ lang: AppLanguage) -> String {
         lang == .zh ? "流程" : "Flow"

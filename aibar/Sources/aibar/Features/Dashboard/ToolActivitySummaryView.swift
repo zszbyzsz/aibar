@@ -1,74 +1,97 @@
 import SwiftUI
 
-/// A compact activity card for the aggregate counters and each individual
-/// tool's 30-day call trend. Tool charts scroll horizontally instead of
-/// making the notch-attached dashboard taller than the available screen.
-struct ToolActivitySummaryView: View {
+/// A compact two-row activity card. The title, aggregate counters, legend,
+/// and period share one header row; the MCP heatmap occupies the second row.
+/// This keeps all of the original information while removing the otherwise
+/// redundant full-height metrics row.
+struct MCPActivityCard: View {
     var calls: Int
     var edits: Int
-    var tools: [ToolUsage]
+    var servers: [MCPUsage]
 
     @Environment(\.appLanguage) private var lang
 
     private static let callsColor = Color.notchAccent
     private static let editsColor = Color(red: 0.922, green: 0.408, blue: 0.204)
-    private static let palette: [Color] = [
-        Color.notchAccent,
-        Color(red: 0.922, green: 0.408, blue: 0.204),
-        Color(red: 0.106, green: 0.686, blue: 0.478),
-        Color(red: 0.929, green: 0.631, blue: 0.000),
-    ]
 
     var body: some View {
-        HStack(spacing: 12) {
-            ToolMetric(
-                icon: "wrench.and.screwdriver.fill",
-                label: L.toolCallsTitle(lang),
-                value: Formatting.groupedCount(calls),
-                color: Self.callsColor
-            )
-            .frame(width: 118, alignment: .leading)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 9) {
+                Label {
+                    Text(L.mcpActivityTitle(lang))
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                } icon: {
+                    Image(systemName: "wrench.and.screwdriver.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.notchAccent)
+                        .frame(width: 22, height: 22)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(Color.notchAccent.opacity(0.12))
+                        )
+                }
+                .labelStyle(.titleAndIcon)
+                .fixedSize()
 
-            VSep()
+                VSep()
+                    .frame(height: 26)
 
-            ToolMetric(
-                icon: "doc.badge.gearshape.fill",
-                label: L.filesChangedTitle(lang),
-                value: Formatting.groupedCount(edits),
-                color: Self.editsColor
-            )
-            .frame(width: 112, alignment: .leading)
+                CompactToolMetric(
+                    icon: "wrench.and.screwdriver.fill",
+                    label: L.mcpCallsTitle(lang),
+                    value: Formatting.groupedCount(calls),
+                    color: Self.callsColor
+                )
 
-            VSep()
+                VSep()
+                    .frame(height: 26)
 
-            if tools.isEmpty {
-                Text(L.noToolActivity(lang))
+                CompactToolMetric(
+                    icon: "doc.badge.gearshape.fill",
+                    label: L.filesChangedTitle(lang),
+                    value: Formatting.groupedCount(edits),
+                    color: Self.editsColor
+                )
+
+                Spacer(minLength: 0)
+
+                ToolHeatmapLegend()
+
+                Text(L.last30Days(lang))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Color.notchMutedInk)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+
+            if servers.isEmpty {
+                Text(L.noMCPActivity(lang))
                     .font(.system(size: 10))
                     .foregroundStyle(Color.notchMutedInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                let maxCalls = max(tools.map(\.calls).max() ?? 0, 1)
-                // Aggregate counters and per-tool trends now share one row,
-                // keeping the card scannable without spending another 58pt
-                // of the notch panel's limited vertical budget.
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        ForEach(Array(tools.enumerated()), id: \.element.id) { index, tool in
-                            ToolUsageTile(
-                                tool: tool,
-                                color: Self.palette[index % Self.palette.count],
-                                maxCalls: maxCalls
-                            )
-                        }
-                    }
-                }
-                .scrollIndicators(.visible)
-                .frame(height: 48)
+                MCPUsageHeatmap(servers: servers)
             }
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.notchCardHighlight, Color.notchCardFill],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(Color.notchCardBorder, lineWidth: 1)
+        )
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            L.toolCallsAndEdits(
+            L.mcpCallsAndEdits(
                 lang,
                 calls: calls,
                 edits: edits
@@ -77,83 +100,159 @@ struct ToolActivitySummaryView: View {
     }
 }
 
-private struct ToolUsageTile: View {
-    var tool: ToolUsage
-    var color: Color
-    var maxCalls: Int
-    @Environment(\.appLanguage) private var lang
-
-    private var displayName: String {
-        tool.name == "other" ? (lang == .zh ? "其他工具" : "Other tools") : tool.name
-    }
-
-    private var icon: String {
-        let name = tool.name.lowercased()
-        if name.contains("shell") || name.contains("terminal") || name.contains("exec") { return "terminal.fill" }
-        if name.contains("patch") || name.contains("edit") || name.contains("write") { return "doc.badge.gearshape.fill" }
-        if name.contains("search") || name.contains("web") { return "magnifyingglass" }
-        if name.contains("file") || name.contains("read") { return "folder.fill" }
-        if name.contains("screen") || name.contains("computer") { return "display" }
-        return "wrench.and.screwdriver.fill"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(color)
-                Text(displayName)
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Text(Formatting.groupedCount(tool.calls))
-                    .font(.system(size: 9.5, weight: .bold).monospacedDigit())
-                    .foregroundStyle(Color.notchInk)
-            }
-            MiniTokenTrendView(values: tool.dailyCalls, color: color, height: 18)
-            GeometryReader { geo in
-                Capsule().fill(Color.notchTrack)
-                    .overlay(alignment: .leading) {
-                        Capsule().fill(color)
-                            .frame(width: max(3, geo.size.width * CGFloat(tool.calls) / CGFloat(maxCalls)))
-                    }
-            }
-            .frame(height: 2)
-        }
-        .frame(width: 118, height: 46)
-        .padding(.horizontal, 7)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.notchTrack.opacity(0.45)))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(color.opacity(0.16), lineWidth: 1))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(displayName): \(Formatting.groupedCount(tool.calls))")
+private enum MCPUsageHeatmapScale {
+    /// Square-root scaling retains the count ordering while keeping lightly
+    /// used tools visible beside a much more frequently used tool.
+    static func brightness(calls: Int, maximum: Int) -> Double {
+        guard calls > 0, maximum > 0 else { return 0 }
+        return sqrt(min(1, Double(calls) / Double(maximum)))
     }
 }
 
-private struct ToolMetric: View {
+private struct MCPUsageHeatmap: View {
+    var servers: [MCPUsage]
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 52, maximum: 64), spacing: 8, alignment: .top)
+    ]
+
+    private var maximumCalls: Int {
+        max(servers.map(\.calls).max() ?? 0, 1)
+    }
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+            ForEach(servers) { server in
+                MCPUsageHeatmapCell(
+                    server: server,
+                    brightness: MCPUsageHeatmapScale.brightness(
+                        calls: server.calls,
+                        maximum: maximumCalls
+                    )
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct MCPUsageHeatmapCell: View {
+    var server: MCPUsage
+    var brightness: Double
+    @Environment(\.appLanguage) private var lang
+
+    private var displayName: String {
+        server.name
+    }
+
+    private var backgroundColor: Color {
+        // Every MCP shares one hue: intensity is the only visual encoding.
+        // The non-zero floor distinguishes a single observed call from an
+        // empty or unavailable square.
+        Color.notchAccent.opacity(0.15 + 0.85 * brightness)
+    }
+
+    private var tooltip: String {
+        "\(displayName): \(Formatting.groupedCount(server.calls)) \(L.mcpCallsTitle(lang).lowercased())"
+    }
+
+    private var icon: String {
+        let name = server.name.lowercased()
+        if name.contains("computer") || name.contains("desktop") || name.contains("node_repl") { return "display" }
+        if name.contains("web") || name.contains("browser") { return "globe" }
+        if name.contains("git") { return "point.3.connected.trianglepath.dotted" }
+        if name.contains("figma") { return "square.grid.2x2" }
+        return "externaldrive.connected.to.line.below"
+    }
+
+    var body: some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 9, weight: .semibold))
+                Spacer(minLength: 0)
+                Text(Formatting.groupedCount(server.calls))
+                    .font(.system(size: 9, weight: .bold).monospacedDigit())
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Text(displayName)
+                .font(.system(size: 8, weight: .semibold))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.75)
+                .frame(maxWidth: .infinity)
+            Spacer(minLength: 0)
+        }
+        .padding(6)
+        .frame(height: 50)
+        .foregroundStyle(Color.notchInk)
+        .background(RoundedRectangle(cornerRadius: 9).fill(backgroundColor))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9)
+                .strokeBorder(Color.white.opacity(0.12 + 0.18 * brightness), lineWidth: 1)
+        )
+        .help(tooltip)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(tooltip)
+    }
+}
+
+private struct ToolHeatmapLegend: View {
+    @Environment(\.appLanguage) private var lang
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("\(L.mcpCallsTitle(lang)):")
+            Text(L.toolHeatmapLow(lang))
+            HeatmapLegendSquare(brightness: 0.18)
+            HeatmapLegendSquare(brightness: 0.55)
+            HeatmapLegendSquare(brightness: 1)
+            Text(L.toolHeatmapHigh(lang))
+        }
+        .font(.system(size: 8.5, weight: .medium))
+        .foregroundStyle(Color.notchMutedInk)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(L.toolHeatmapHint(lang))
+    }
+}
+
+private struct HeatmapLegendSquare: View {
+    var brightness: Double
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 2.5)
+            .fill(Color.notchAccent.opacity(0.15 + 0.85 * brightness))
+            .frame(width: 10, height: 10)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct CompactToolMetric: View {
     var icon: String
     var label: String
     var value: String
     var color: Color
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 6) {
             ZStack {
                 Circle()
                     .fill(color.opacity(0.14))
-                    .frame(width: 28, height: 28)
+                    .frame(width: 22, height: 22)
                 Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(color)
             }
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text(label)
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 8.5))
                     .foregroundStyle(Color.notchMutedInk)
                 Text(value)
-                    .font(.system(size: 16, weight: .bold).monospacedDigit())
+                    .font(.system(size: 14, weight: .bold).monospacedDigit())
             }
         }
+        .fixedSize()
     }
 }

@@ -58,6 +58,12 @@ struct FileSummary {
     /// The same tool counts split by event day, so the dashboard can render a
     /// real 30-day trend per tool without reopening session transcripts.
     var dailyToolUsage: [String: [String: Int]] = [:]
+    /// MCP invocations grouped by MCP server name. The server identity is
+    /// retained, never arguments, results, commands, or file paths.
+    var mcpCallCount: Int = 0
+    var mcpUsage: [String: Int] = [:]
+    /// The same MCP counts split by event day for the dashboard heatmap.
+    var dailyMCPUsage: [String: [String: Int]] = [:]
 }
 
 /// Cache records predate the per-tool counters above.  These fields are
@@ -78,6 +84,9 @@ extension FileSummary: Codable {
         case filesChangedCount
         case toolUsage
         case dailyToolUsage
+        case mcpCallCount
+        case mcpUsage
+        case dailyMCPUsage
     }
 
     init(from decoder: Decoder) throws {
@@ -97,6 +106,9 @@ extension FileSummary: Codable {
         filesChangedCount = try container.decodeIfPresent(Int.self, forKey: .filesChangedCount) ?? 0
         toolUsage = try container.decodeIfPresent([String: Int].self, forKey: .toolUsage) ?? [:]
         dailyToolUsage = try container.decodeIfPresent([String: [String: Int]].self, forKey: .dailyToolUsage) ?? [:]
+        mcpCallCount = try container.decodeIfPresent(Int.self, forKey: .mcpCallCount) ?? 0
+        mcpUsage = try container.decodeIfPresent([String: Int].self, forKey: .mcpUsage) ?? [:]
+        dailyMCPUsage = try container.decodeIfPresent([String: [String: Int]].self, forKey: .dailyMCPUsage) ?? [:]
     }
 
     func encode(to encoder: Encoder) throws {
@@ -113,6 +125,9 @@ extension FileSummary: Codable {
         try container.encode(filesChangedCount, forKey: .filesChangedCount)
         try container.encode(toolUsage, forKey: .toolUsage)
         try container.encode(dailyToolUsage, forKey: .dailyToolUsage)
+        try container.encode(mcpCallCount, forKey: .mcpCallCount)
+        try container.encode(mcpUsage, forKey: .mcpUsage)
+        try container.encode(dailyMCPUsage, forKey: .dailyMCPUsage)
     }
 }
 
@@ -212,10 +227,9 @@ struct ProjectModelUsage: Identifiable {
     var apiEquivalentCost: Double = 0
 }
 
-/// One named tool's 30-day activity. This is intentionally call-count based:
-/// tools have no common token-equivalent unit, while calls are a faithful,
-/// comparable measure across shell, file, browser, and MCP tools.
-struct ToolUsage: Identifiable {
+/// One MCP server's 30-day activity. The dashboard heatmap uses `calls` for
+/// brightness because calls are the only comparable measure across MCPs.
+struct MCPUsage: Identifiable {
     var id: String { name }
     var name: String
     var calls: Int
@@ -392,9 +406,9 @@ struct UsagePayload {
     var monthTokens: Int = 0
     var monthInputTokens: Int = 0
     var monthCachedTokens: Int = 0
-    var monthToolCalls: Int = 0
+    var monthMCPCalls: Int = 0
     var monthFilesChanged: Int = 0
-    var tools: [ToolUsage] = []
+    var mcpServers: [MCPUsage] = []
     var monthUnpricedModels: [String] = []
     var models: [ModelUsage] = []
     var daily: [DailyPoint] = []

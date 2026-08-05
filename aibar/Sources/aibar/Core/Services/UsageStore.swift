@@ -411,11 +411,11 @@ final class UsageStore: ObservableObject {
         let toolCallBands = recentMonthTokens.enumerated().map { index, tokens in
             max(0, Int(Double(tokens) / 180_000_000) + (index % 4))
         }
-        let demoTools = [
-            ToolUsage(name: "shell", calls: 186, dailyCalls: toolCallBands.map { $0 + 2 }),
-            ToolUsage(name: "apply_patch", calls: 121, dailyCalls: toolCallBands.map { max(0, $0 - 1) }),
-            ToolUsage(name: "file_search", calls: 103, dailyCalls: toolCallBands.map { max(0, $0 / 2) }),
-            ToolUsage(name: "web_search", calls: 72, dailyCalls: toolCallBands.map { $0 % 5 }),
+        let demoMCPServers = [
+            MCPUsage(name: "codex_apps", calls: 186, dailyCalls: toolCallBands.map { $0 + 2 }),
+            MCPUsage(name: "node_repl", calls: 121, dailyCalls: toolCallBands.map { max(0, $0 - 1) }),
+            MCPUsage(name: "computer-use", calls: 103, dailyCalls: toolCallBands.map { max(0, $0 / 2) }),
+            MCPUsage(name: "gitnexus", calls: 72, dailyCalls: toolCallBands.map { $0 % 5 }),
         ]
         let resetBase = now.timeIntervalSince1970
         return UsagePayload(
@@ -432,9 +432,9 @@ final class UsageStore: ObservableObject {
             monthTokens: 67_260_000_000,
             monthInputTokens: 43_000_000_000,
             monthCachedTokens: 18_000_000_000,
-            monthToolCalls: 482,
+            monthMCPCalls: 482,
             monthFilesChanged: 97,
-            tools: demoTools,
+            mcpServers: demoMCPServers,
             monthUnpricedModels: [],
             models: [
                 ModelUsage(model: "gpt-5.6-sol", tokens: 42_000_000_000, apiEquivalentCost: 32_100.00, inputCost: 12_840.0, cachedCost: 3_210.0, outputCost: 16_050.0, dailyTokens: modelTrends[0]),

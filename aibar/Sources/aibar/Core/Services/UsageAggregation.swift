@@ -136,10 +136,10 @@ enum UsageAggregation {
         var latestSessionTokens = 0
         var latestSessionAt = Date.distantPast
         var latestSessionUsageByDate: [String: [String: [String: Int]]] = [:]
-        var monthToolCalls = 0
+        var monthMCPCalls = 0
         var monthFilesChanged = 0
-        var monthToolUsage: [String: Int] = [:]
-        var dailyToolUsage: [String: [String: Int]] = [:]
+        var monthMCPUsage: [String: Int] = [:]
+        var dailyMCPUsage: [String: [String: Int]] = [:]
         // Unlike the overall model list, this keeps the model dimension nested
         // under each project. A session has one cwd but can switch models, so
         // recording only `projectTokens` here would make the breakdown
@@ -162,25 +162,24 @@ enum UsageAggregation {
             }
         }
 
-        /// Tool events have their own dates, unlike the legacy session-level
-        /// totals. Prefer the detailed counters so a long-running session is
-        /// attributed to the days on which its tools were actually invoked;
-        /// retain the old end-date behavior for caches/providers without them.
-        func addToolUsage(_ summary: FileSummary, ended: Date) {
-            if !summary.dailyToolUsage.isEmpty {
-                for (dateKey, tools) in summary.dailyToolUsage {
+        /// MCP events have their own dates, unlike the legacy session-level
+        /// totals. Keeping the server dimension lets the dashboard attribute
+        /// every invocation to its MCP rather than its individual tool name.
+        func addMCPUsage(_ summary: FileSummary, ended: Date) {
+            if !summary.dailyMCPUsage.isEmpty {
+                for (dateKey, servers) in summary.dailyMCPUsage {
                     guard let day = dateFromDayKey(dateKey, timeZone: calendarTimeZone), day >= monthStart else { continue }
-                    for (tool, calls) in tools where calls > 0 {
-                        monthToolCalls += calls
-                        monthToolUsage[tool, default: 0] += calls
-                        dailyToolUsage[dateKey, default: [:]][tool, default: 0] += calls
+                    for (server, calls) in servers where calls > 0 {
+                        monthMCPCalls += calls
+                        monthMCPUsage[server, default: 0] += calls
+                        dailyMCPUsage[dateKey, default: [:]][server, default: 0] += calls
                     }
                 }
             } else if ended >= monthStart {
-                monthToolCalls += summary.toolCallCount
-                for (tool, calls) in summary.toolUsage where calls > 0 {
-                    monthToolUsage[tool, default: 0] += calls
-                    dailyToolUsage[isoDateOnly(ended, timeZone: calendarTimeZone), default: [:]][tool, default: 0] += calls
+                monthMCPCalls += summary.mcpCallCount
+                for (server, calls) in summary.mcpUsage where calls > 0 {
+                    monthMCPUsage[server, default: 0] += calls
+                    dailyMCPUsage[isoDateOnly(ended, timeZone: calendarTimeZone), default: [:]][server, default: 0] += calls
                 }
             }
         }
@@ -204,7 +203,7 @@ enum UsageAggregation {
                     latestPlan = planType
                 }
             }
-            addToolUsage(summary, ended: ended)
+            addMCPUsage(summary, ended: ended)
             for (kind, slot) in summary.limitsByKind {
                 let slotAt = Formatting.parseISODate(slot.at) ?? ended
                 if let existing = limitsByKind[kind] {
@@ -485,14 +484,14 @@ enum UsageAggregation {
         let modelTrendDates = recentDateKeys(30)
         let projectTrendDates = recentDateKeys(90)
 
-        var tools: [ToolUsage] = []
-        for (name, calls) in monthToolUsage {
+        var mcpServers: [MCPUsage] = []
+        for (name, calls) in monthMCPUsage {
             let trend = modelTrendDates.map { dateKey in
-                dailyToolUsage[dateKey]?[name] ?? 0
+                dailyMCPUsage[dateKey]?[name] ?? 0
             }
-            tools.append(ToolUsage(name: name, calls: calls, dailyCalls: trend))
+            mcpServers.append(MCPUsage(name: name, calls: calls, dailyCalls: trend))
         }
-        tools.sort { lhs, rhs in
+        mcpServers.sort { lhs, rhs in
             lhs.calls == rhs.calls
                 ? lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
                 : lhs.calls > rhs.calls
@@ -573,9 +572,9 @@ enum UsageAggregation {
             monthTokens: monthTokens,
             monthInputTokens: monthInputTokens,
             monthCachedTokens: monthCachedTokens,
-            monthToolCalls: monthToolCalls,
+            monthMCPCalls: monthMCPCalls,
             monthFilesChanged: monthFilesChanged,
-            tools: tools,
+            mcpServers: mcpServers,
             monthUnpricedModels: monthUnpriced,
             models: modelBreakdown,
             daily: daily,

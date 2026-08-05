@@ -174,17 +174,11 @@ struct DashboardView: View {
 
         attributionCards
 
-        SectionCard(
-            title: L.toolActivityTitle(lang),
-            icon: "wrench.and.screwdriver.fill",
-            trailing: L.last30Days(lang)
-        ) {
-            ToolActivitySummaryView(
-                calls: data.monthToolCalls,
-                edits: data.monthFilesChanged,
-                tools: data.tools
-            )
-        }
+        MCPActivityCard(
+            calls: data.monthMCPCalls,
+            edits: data.monthFilesChanged,
+            servers: data.mcpServers
+        )
 
         if store.provider == .codex, let activity = data.activeProject {
             ProjectActivityMonitorView(activity: activity)

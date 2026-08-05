@@ -10,6 +10,13 @@ final class UsageScannerTests: XCTestCase {
         return url
     }
 
+    func testPriorCacheVersionsRemainReadableDuringMCPBackfill() {
+        XCTAssertTrue(UsageScanner.canReadCacheVersion(7))
+        XCTAssertTrue(UsageScanner.canReadCacheVersion(8))
+        XCTAssertTrue(UsageScanner.canReadCacheVersion(9))
+        XCTAssertFalse(UsageScanner.canReadCacheVersion(6))
+    }
+
     func testLegacyCacheSummaryDecodesWithoutNewToolCounters() throws {
         // v7 caches contain real token/project summaries but predate the two
         // optional per-tool fields. A missing field must not invalidate the
@@ -25,6 +32,9 @@ final class UsageScannerTests: XCTestCase {
         XCTAssertEqual(summary.toolCallCount, 3)
         XCTAssertEqual(summary.toolUsage, [:])
         XCTAssertEqual(summary.dailyToolUsage, [:])
+        XCTAssertEqual(summary.mcpCallCount, 0)
+        XCTAssertEqual(summary.mcpUsage, [:])
+        XCTAssertEqual(summary.dailyMCPUsage, [:])
         XCTAssertEqual(summary.dailyUsageByModel, [:])
     }
 
@@ -33,6 +43,7 @@ final class UsageScannerTests: XCTestCase {
             #"{"timestamp":"2026-07-20T10:00:00Z","type":"session_meta","payload":{"cwd":"/Users/x/my-project"}}"#,
             #"{"timestamp":"2026-07-20T10:01:00Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.6-sol","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":500,"total_tokens":1500}}}}"#,
             #"{"timestamp":"2026-07-20T10:02:00Z","type":"event_msg","payload":{"type":"function_call"}}"#,
+            #"{"timestamp":"2026-07-20T10:02:30Z","type":"event_msg","payload":{"type":"mcp_tool_call_end","invocation":{"server":"figma","tool":"get_design_context"}}}"#,
             #"{"timestamp":"2026-07-20T10:03:00Z","type":"event_msg","payload":{"type":"patch_apply_end","changes":{"a.swift":{},"b.swift":{}}}}"#,
             #"{"timestamp":"2026-07-20T10:04:00Z","type":"event_msg","payload":{"type":"turn_context","rate_limits":{"plan_type":"Pro","primary":{"window_minutes":300,"used_percent":45.5,"resets_at":1780000000},"secondary":{"window_minutes":10080,"used_percent":12.3,"resets_at":1781000000}}}}"#,
         ]
@@ -46,6 +57,9 @@ final class UsageScannerTests: XCTestCase {
         XCTAssertEqual(summary.usage["input_tokens"], 1000)
         XCTAssertEqual(summary.usageByModel["gpt-5.6-sol"]?["total_tokens"], 1500)
         XCTAssertEqual(summary.toolCallCount, 1)
+        XCTAssertEqual(summary.mcpCallCount, 1)
+        XCTAssertEqual(summary.mcpUsage, ["figma": 1])
+        XCTAssertEqual(summary.dailyMCPUsage["2026-07-20"], ["figma": 1])
         XCTAssertEqual(summary.filesChangedCount, 2)
         XCTAssertEqual(summary.planType, "Pro")
         XCTAssertEqual(summary.limitsByKind["session"]?.usedPercent, 45.5)

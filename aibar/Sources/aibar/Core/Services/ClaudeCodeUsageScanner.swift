@@ -12,8 +12,8 @@ import Foundation
 final class ClaudeCodeUsageScanner {
     private let sessionsRoot: URL
     private let cachePath: URL
-    // Version 4 adds tool-name/day counters for the Tool Activity trends.
-    private static let cacheVersion = 4
+    // Version 5 adds MCP-server/day counters for the MCP Activity display.
+    private static let cacheVersion = 5
     private static let fileToolNames: Set<String> = ["Edit", "Write", "MultiEdit", "NotebookEdit"]
 
     init() {
@@ -67,6 +67,9 @@ final class ClaudeCodeUsageScanner {
         var filesChangedCount = 0
         var toolUsage: [String: Int] = [:]
         var dailyToolUsage: [String: [String: Int]] = [:]
+        var mcpCallCount = 0
+        var mcpUsage: [String: Int] = [:]
+        var dailyMCPUsage: [String: [String: Int]] = [:]
         var latestAt = Formatting.isoTimestamp(from: fallbackAt)
         var sawUsage = false
 
@@ -80,7 +83,9 @@ final class ClaudeCodeUsageScanner {
                     process(lineData: lineData, latestAt: &latestAt, totals: &totals,
                             usageByModel: &usageByModel, project: &project,
                             toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount,
-                            toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage, sawUsage: &sawUsage)
+                            toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage,
+                            mcpCallCount: &mcpCallCount, mcpUsage: &mcpUsage, dailyMCPUsage: &dailyMCPUsage,
+                            sawUsage: &sawUsage)
                 }
                 lineStart = index + 1
             }
@@ -89,7 +94,9 @@ final class ClaudeCodeUsageScanner {
                 process(lineData: lineData, latestAt: &latestAt, totals: &totals,
                         usageByModel: &usageByModel, project: &project,
                         toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount,
-                        toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage, sawUsage: &sawUsage)
+                        toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage,
+                        mcpCallCount: &mcpCallCount, mcpUsage: &mcpUsage, dailyMCPUsage: &dailyMCPUsage,
+                        sawUsage: &sawUsage)
             }
         }
 
@@ -97,7 +104,8 @@ final class ClaudeCodeUsageScanner {
         return FileSummary(endedAt: latestAt, usage: totals, usageByModel: usageByModel,
                             limitsByKind: [:], planType: nil, planAt: nil,
                             project: project, toolCallCount: toolCallCount, filesChangedCount: filesChangedCount,
-                            toolUsage: toolUsage, dailyToolUsage: dailyToolUsage)
+                            toolUsage: toolUsage, dailyToolUsage: dailyToolUsage,
+                            mcpCallCount: mcpCallCount, mcpUsage: mcpUsage, dailyMCPUsage: dailyMCPUsage)
     }
 
     private func process(
@@ -105,6 +113,7 @@ final class ClaudeCodeUsageScanner {
         usageByModel: inout [String: [String: Int]], project: inout String?,
         toolCallCount: inout Int, filesChangedCount: inout Int,
         toolUsage: inout [String: Int], dailyToolUsage: inout [String: [String: Int]],
+        mcpCallCount: inout Int, mcpUsage: inout [String: Int], dailyMCPUsage: inout [String: [String: Int]],
         sawUsage: inout Bool
     ) {
         guard let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { return }
@@ -124,6 +133,11 @@ final class ClaudeCodeUsageScanner {
                 let dateKey = UsageAggregation.isoDateOnly(Formatting.parseISODate(latestAt) ?? Date())
                 toolUsage[toolName, default: 0] += 1
                 dailyToolUsage[dateKey, default: [:]][toolName, default: 0] += 1
+                if let server = Self.mcpServerName(in: toolName) {
+                    mcpCallCount += 1
+                    mcpUsage[server, default: 0] += 1
+                    dailyMCPUsage[dateKey, default: [:]][server, default: 0] += 1
+                }
                 if Self.fileToolNames.contains(toolName) {
                     filesChangedCount += 1
                 }
@@ -157,6 +171,14 @@ final class ClaudeCodeUsageScanner {
             totals[key, default: 0] += value
             usageByModel[model, default: [:]][key, default: 0] += value
         }
+    }
+
+    /// Claude names MCP tools as `mcp__server__tool`; retaining only the
+    /// server keeps the dashboard aligned with Codex's MCP event format.
+    private static func mcpServerName(in toolName: String) -> String? {
+        let parts = toolName.split(separator: "__", omittingEmptySubsequences: true)
+        guard parts.count >= 3, parts[0].lowercased() == "mcp", !parts[1].isEmpty else { return nil }
+        return String(parts[1])
     }
 
     /// Full scan: same cache-then-reaggregate shape as UsageScanner.scan(),

@@ -15,12 +15,16 @@ final class UsageScanner {
     private static let longContextUsageKeys = [
         "input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens",
     ]
-    // Version 8 adds privacy-preserving tool-name/day counters used by the
-    // Tool Activity trends.  It is deliberately backward-compatible with
-    // v7: rebuilding a multi-terabyte transcript archive merely to add an
-    // optional presentation field leaves the dashboard blank for far too long.
-    private static let cacheVersion = 8
-    private static let compatibleCacheVersions: Set<Int> = [7, cacheVersion]
+    // Version 9 adds privacy-preserving MCP-server/day counters. Older caches
+    // remain readable so their token/project/quota data can be shown
+    // immediately; `scan` backfills MCP fields in the background before
+    // atomically writing the upgraded cache.
+    private static let cacheVersion = 9
+    private static let compatibleCacheVersions: Set<Int> = [7, 8, cacheVersion]
+
+    static func canReadCacheVersion(_ version: Int) -> Bool {
+        compatibleCacheVersions.contains(version)
+    }
 
     init() {
         let home = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
@@ -49,12 +53,9 @@ final class UsageScanner {
 
     private func readCache() -> CacheFile {
         guard let data = try? Data(contentsOf: cachePath),
-              var cache = try? JSONDecoder().decode(CacheFile.self, from: data),
-              Self.compatibleCacheVersions.contains(cache.version)
+              let cache = try? JSONDecoder().decode(CacheFile.self, from: data),
+              Self.canReadCacheVersion(cache.version)
         else { return CacheFile(version: Self.cacheVersion, files: [:]) }
-        // Persist the lightweight schema migration on the next regular write;
-        // unchanged entries keep their real token/project summaries intact.
-        cache.version = Self.cacheVersion
         return cache
     }
 
@@ -79,6 +80,9 @@ final class UsageScanner {
         var filesChangedCount = 0
         var toolUsage: [String: Int] = [:]
         var dailyToolUsage: [String: [String: Int]] = [:]
+        var mcpCallCount = 0
+        var mcpUsage: [String: Int] = [:]
+        var dailyMCPUsage: [String: [String: Int]] = [:]
         var activeModel = "unknown"
         var firstKnownModel: String?
         var previousTotalUsage: [String: Int]?
@@ -97,7 +101,8 @@ final class UsageScanner {
                             dailyUsageByModel: &dailyUsageByModel,
                             limitsByKind: &limitsByKind, planType: &planType, planAt: &planAt,
                             project: &project, toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount,
-                            toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage)
+                            toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage,
+                            mcpCallCount: &mcpCallCount, mcpUsage: &mcpUsage, dailyMCPUsage: &dailyMCPUsage)
                 }
                 lineStart = index + 1
             }
@@ -109,7 +114,8 @@ final class UsageScanner {
                         dailyUsageByModel: &dailyUsageByModel,
                         limitsByKind: &limitsByKind, planType: &planType, planAt: &planAt,
                         project: &project, toolCallCount: &toolCallCount, filesChangedCount: &filesChangedCount,
-                        toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage)
+                        toolUsage: &toolUsage, dailyToolUsage: &dailyToolUsage,
+                        mcpCallCount: &mcpCallCount, mcpUsage: &mcpUsage, dailyMCPUsage: &dailyMCPUsage)
             }
         }
 
@@ -128,7 +134,8 @@ final class UsageScanner {
                             dailyUsageByModel: dailyUsageByModel,
                             limitsByKind: limitsByKind, planType: planType, planAt: planAt,
                             project: project, toolCallCount: toolCallCount, filesChangedCount: filesChangedCount,
-                            toolUsage: toolUsage, dailyToolUsage: dailyToolUsage)
+                            toolUsage: toolUsage, dailyToolUsage: dailyToolUsage,
+                            mcpCallCount: mcpCallCount, mcpUsage: mcpUsage, dailyMCPUsage: dailyMCPUsage)
     }
 
     /// Byte-level triage ahead of the JSON parser, which is what a cold rebuild
@@ -144,6 +151,7 @@ final class UsageScanner {
         #""type":"session_meta""#,
         #""type":"custom_tool_call""#,
         #""type":"function_call""#,
+        #""type":"mcp_tool_call_end""#,
         #""type":"patch_apply_end""#,
         #""rate_limits""#,
     ].map { Data($0.utf8) }
@@ -194,7 +202,8 @@ final class UsageScanner {
         dailyUsageByModel: inout [String: [String: [String: Int]]],
         limitsByKind: inout [String: LimitSlot], planType: inout String?, planAt: inout String?,
         project: inout String?, toolCallCount: inout Int, filesChangedCount: inout Int,
-        toolUsage: inout [String: Int], dailyToolUsage: inout [String: [String: Int]]
+        toolUsage: inout [String: Int], dailyToolUsage: inout [String: [String: Int]],
+        mcpCallCount: inout Int, mcpUsage: inout [String: Int], dailyMCPUsage: inout [String: [String: Int]]
     ) {
         let envelope = lineData.count > Self.envelopeBytes ? lineData.prefix(Self.envelopeBytes) : lineData
         guard Self.usefulMarkers.contains(where: { envelope.range(of: $0) != nil }) else {
@@ -223,6 +232,15 @@ final class UsageScanner {
             let dateKey = UsageAggregation.isoDateOnly(Formatting.parseISODate(latestAt) ?? Date())
             toolUsage[toolName, default: 0] += 1
             dailyToolUsage[dateKey, default: [:]][toolName, default: 0] += 1
+        }
+        if payloadType == "mcp_tool_call_end",
+           let invocation = payload["invocation"] as? [String: Any],
+           let server = (invocation["server"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !server.isEmpty {
+            let dateKey = UsageAggregation.isoDateOnly(Formatting.parseISODate(latestAt) ?? Date())
+            mcpCallCount += 1
+            mcpUsage[server, default: 0] += 1
+            dailyMCPUsage[dateKey, default: [:]][server, default: 0] += 1
         }
         if payloadType == "patch_apply_end", let changes = payload["changes"] as? [String: Any] {
             filesChangedCount += changes.count
@@ -329,6 +347,8 @@ final class UsageScanner {
         accountUsage: CodexAccountTokenUsage? = nil
     ) -> UsagePayload {
         var cache = readCache()
+        let needsMCPBackfill = cache.version < Self.cacheVersion
+        cache.version = Self.cacheVersion
         let paths = allJSONLFiles()
 
         var liveKeys = Set<String>()
@@ -340,7 +360,10 @@ final class UsageScanner {
                   let size = values.fileSize
             else { continue }
 
-            if let existing = cache.files[key], existing.mtime == mtime, existing.size == size {
+            if let existing = cache.files[key],
+               existing.mtime == mtime,
+               existing.size == size,
+               !needsMCPBackfill {
                 continue
             }
             if let summary = parseSession(url: url) {

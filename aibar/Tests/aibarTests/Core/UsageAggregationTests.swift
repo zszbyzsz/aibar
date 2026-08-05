@@ -121,7 +121,10 @@ final class UsageAggregationTests: XCTestCase {
             planAt: Formatting.isoTimestamp(from: now),
             project: "aibar",
             toolCallCount: 2,
-            filesChangedCount: 3
+            filesChangedCount: 3,
+            mcpCallCount: 2,
+            mcpUsage: ["figma": 2],
+            dailyMCPUsage: [day: ["figma": 2]]
         )
         let entry = CachedEntry(mtime: now.timeIntervalSince1970, size: 1, summary: summary)
         let prices = ["gpt-test": ModelPrice(input: 2, cachedInput: 0.5, output: 8, source: "test", status: "live")]
@@ -136,7 +139,9 @@ final class UsageAggregationTests: XCTestCase {
 
         XCTAssertEqual(payload.plan, "Pro")
         XCTAssertEqual(payload.monthTokens, 1_100_000)
-        XCTAssertEqual(payload.monthToolCalls, 2)
+        XCTAssertEqual(payload.monthMCPCalls, 2)
+        XCTAssertEqual(payload.mcpServers.map(\.name), ["figma"])
+        XCTAssertEqual(payload.mcpServers.map(\.calls), [2])
         XCTAssertEqual(payload.monthFilesChanged, 3)
         XCTAssertEqual(payload.topProjects.first?.name, "aibar")
         XCTAssertEqual(payload.topProjects.first?.models.map(\.model), ["gpt-test"])
