@@ -1,33 +1,21 @@
 import AppKit
 import SwiftUI
-import Combine
 
-/// Two unobtrusive quota readouts that sit beside the physical notch. They are
-/// deliberately separate windows so the center remains available to the
-/// dashboard's existing hover hotzone. They are hidden only while that
-/// dashboard is presented; activity-capsule state never affects them.
+/// Two unobtrusive quota readouts that sit beside a physical notch, or merge
+/// into one complete hanging capsule when the display has no camera housing.
+/// They are hidden only while the dashboard is presented; activity-capsule
+/// state never affects them.
 @MainActor
 final class QuotaStatusBarController: NSObject {
     private let store: UsageStore
-    /// Pure background fill for software screenshots of the camera gap.
-    /// It is ordered before every interactive surface and ignores the mouse.
-    private let cameraBridgePanel: NSPanel
-    private let leftPanel: NSPanel
-    private let rightPanel: NSPanel
-    private var quotaSubscription: AnyCancellable?
+    /// The camera fill and both quota readouts are intentionally hosted in a
+    /// single window. Splitting them into a bridge plus two side panels left
+    /// visible seams when macOS composited or captured them independently.
+    private let quotaPanel: NSPanel
     private var readoutsVisible = true
     private var isDashboardPresented = false
     private var isScreenshotSuppressed = false
 
-    /// Just enough room for a two-digit readout. Keeping these wings narrow
-    /// lets the hardware notch remain the visual anchor instead of turning
-    /// the whole menu bar into a second, wider notch.
-    private static let readoutWidth: CGFloat = 38
-    /// The display's rounded camera-housing corners can otherwise reveal a
-    /// sliver of wallpaper at the join. A deliberate overlap hides that
-    /// seam without making the readouts feel detached from the notch.
-    private static let notchInset: CGFloat = 10
-    private static let fallbackSize = CGSize(width: 170, height: 34)
     /// Side readouts live inside the menu-bar safe area. One step above the
     /// normal status-window level keeps them from being painted underneath the
     /// system menu-bar surface, while remaining far below alerts and menus.
@@ -37,30 +25,11 @@ final class QuotaStatusBarController: NSObject {
 
     init(store: UsageStore) {
         self.store = store
-        cameraBridgePanel = Self.makePanel(ignoresMouseEvents: true)
-        leftPanel = Self.makePanel()
-        rightPanel = Self.makePanel()
+        quotaPanel = Self.makePanel(ignoresMouseEvents: true)
         super.init()
 
-        cameraBridgePanel.level = NSWindow.Level(
-            rawValue: NSWindow.Level.statusBar.rawValue - 1
-        )
-        leftPanel.level = Self.readoutLevel
-        rightPanel.level = Self.readoutLevel
-        let bridgeView = NSView()
-        bridgeView.wantsLayer = true
-        bridgeView.layer?.backgroundColor = NSColor.black.cgColor
-        cameraBridgePanel.contentView = bridgeView
-        leftPanel.contentView = NSHostingView(
-            rootView: QuotaSideReadoutView(store: store, side: .left)
-        )
-        rightPanel.contentView = NSHostingView(
-            rootView: QuotaSideReadoutView(store: store, side: .right)
-        )
+        quotaPanel.level = Self.readoutLevel
         reposition()
-        quotaSubscription = store.$payload.sink { [weak self] _ in
-            self?.updatePanelVisibility()
-        }
         updatePanelVisibility()
 
         NotificationCenter.default.addObserver(
@@ -99,15 +68,12 @@ final class QuotaStatusBarController: NSObject {
 
     private func hideReadouts() {
         readoutsVisible = false
-        cameraBridgePanel.orderOut(nil)
-        leftPanel.orderOut(nil)
-        rightPanel.orderOut(nil)
+        quotaPanel.orderOut(nil)
     }
 
-    /// Keep both notch wings visible whenever the readouts are enabled. Codex
-    /// sometimes returns only one of the two windows; replacing the absent
-    /// value with a muted em dash is clearer than making the entire side look
-    /// broken or causing the wings to jump around between refreshes.
+    /// Keep the complete unified bar visible whenever readouts are enabled.
+    /// Missing quota values render as muted em dashes inside the same stable
+    /// geometry, so the bar never splits or changes width during refreshes.
     private func updatePanelVisibility() {
         let shouldShow = FloatingSurfaceVisibilityPolicy.showsQuotaReadouts(
             requested: readoutsVisible,
@@ -115,14 +81,10 @@ final class QuotaStatusBarController: NSObject {
             screenshotSuppressed: isScreenshotSuppressed
         )
         guard shouldShow else {
-            cameraBridgePanel.orderOut(nil)
-            leftPanel.orderOut(nil)
-            rightPanel.orderOut(nil)
+            quotaPanel.orderOut(nil)
             return
         }
-        showCameraBridgeIfAvailable()
-        show(panel: leftPanel)
-        show(panel: rightPanel)
+        show(panel: quotaPanel)
     }
 
     private func show(panel: NSPanel) {
@@ -137,34 +99,15 @@ final class QuotaStatusBarController: NSObject {
 
     private func reposition() {
         guard let screen = NotchGeometry.targetScreen() else { return }
-        let frames = NotchGeometry.sideFrames(
-            on: screen,
-            width: Self.readoutWidth,
-            inset: Self.notchInset,
-            fallbackSize: Self.fallbackSize
+        let layout = NotchGeometry.quotaBarLayout(on: screen)
+        quotaPanel.setFrame(layout.frame, display: true)
+        quotaPanel.contentView = NSHostingView(
+            rootView: QuotaBarView(
+                store: store,
+                sideContentWidth: layout.sideContentWidth,
+                centerWidth: layout.centerWidth
+            )
         )
-        leftPanel.setFrame(frames.left, display: true)
-        rightPanel.setFrame(frames.right, display: true)
-        if let bridgeFrame = NotchGeometry.cameraBridgeFrame(on: screen) {
-            cameraBridgePanel.setFrame(bridgeFrame, display: true)
-        } else {
-            cameraBridgePanel.orderOut(nil)
-        }
-    }
-
-    private func showCameraBridgeIfAvailable() {
-        guard let screen = NotchGeometry.targetScreen(),
-              let bridgeFrame = NotchGeometry.cameraBridgeFrame(on: screen)
-        else {
-            cameraBridgePanel.orderOut(nil)
-            return
-        }
-
-        cameraBridgePanel.setFrame(bridgeFrame, display: true)
-        cameraBridgePanel.alphaValue = 1
-        // Ordered first: quota wings are ordered immediately afterward, and
-        // the independently managed activity capsule remains above both.
-        cameraBridgePanel.orderFrontRegardless()
     }
 
     private static func makePanel(ignoresMouseEvents: Bool = false) -> NSPanel {
@@ -187,21 +130,53 @@ final class QuotaStatusBarController: NSObject {
     }
 }
 
-private struct QuotaSideReadoutView: View {
-    enum Side: Hashable {
-        case left
-        case right
+/// One complete black surface: left value, fully filled camera/fallback
+/// center, right value. It is rendered in a single native window so a screen
+/// capture sees the same continuous shape that is visible around the hardware
+/// housing in person.
+private struct QuotaBarView: View {
+    @ObservedObject var store: UsageStore
+    let sideContentWidth: CGFloat
+    let centerWidth: CGFloat
+
+    var body: some View {
+        HStack(spacing: 0) {
+            QuotaValueView(store: store, side: .left)
+                .frame(width: sideContentWidth)
+            Color.clear.frame(width: centerWidth)
+            QuotaValueView(store: store, side: .right)
+                .frame(width: sideContentWidth)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(hangingShape.fill(Color.black))
+        .clipShape(hangingShape)
+        .accessibilityElement(children: .contain)
     }
 
+    /// The top remains flush with the screen edge like a hardware notch;
+    /// rounding only the lower corners avoids the detached oval/sliver that a
+    /// full `Capsule` creates when its top half is clipped by the menu bar.
+    private var hangingShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 0,
+            bottomLeadingRadius: 9,
+            bottomTrailingRadius: 9,
+            topTrailingRadius: 0
+        )
+    }
+}
+
+private enum QuotaReadoutSide {
+    case left
+    case right
+}
+
+private struct QuotaValueView: View {
     @ObservedObject var store: UsageStore
-    let side: Side
+    let side: QuotaReadoutSide
 
     private var remainingPercent: Int? {
-        let limit: LimitView?
-        switch side {
-        case .left: limit = store.payload.weekly
-        case .right: limit = store.payload.session
-        }
+        let limit = side == .left ? store.payload.weekly : store.payload.session
         guard let used = limit?.usedPercent else { return nil }
         return Int(min(100, max(0, 100 - used)).rounded())
     }
@@ -210,8 +185,6 @@ private struct QuotaSideReadoutView: View {
         remainingPercent.map { "\($0)%" } ?? "—"
     }
 
-    /// Uses the same five-stage scale as the dashboard, so a color always
-    /// means the same remaining-quota range wherever it appears.
     private var readoutColor: Color {
         QuotaStatusPalette.color(
             remaining: remainingPercent,
@@ -220,51 +193,16 @@ private struct QuotaSideReadoutView: View {
         )
     }
 
-    /// The inside edge is deliberately square so the tab visually grows out
-    /// of the notch; only its free, lower outside corner is softened.
-    private var tabShape: UnevenRoundedRectangle {
-        switch side {
-        case .left:
-            return UnevenRoundedRectangle(
-                topLeadingRadius: 0, bottomLeadingRadius: 7,
-                bottomTrailingRadius: 0, topTrailingRadius: 0
-            )
-        case .right:
-            return UnevenRoundedRectangle(
-                topLeadingRadius: 0, bottomLeadingRadius: 0,
-                bottomTrailingRadius: 7, topTrailingRadius: 0
-            )
-        }
-    }
-
-    private var accessibilityLabel: String {
-        switch side {
-        case .left: return "Weekly quota remaining \(percentText)"
-        case .right: return "5-hour quota remaining \(percentText)"
-        }
-    }
-
-    /// The panel intentionally extends under the camera housing to cover its
-    /// rounded edge. Nudge the glyph back by half that hidden overlap so it
-    /// remains centered in the portion that is actually visible.
-    private var textOffset: CGFloat {
-        switch side {
-        case .left: return -5
-        case .right: return 5
-        }
-    }
-
     var body: some View {
-        ZStack {
-            tabShape.fill(Color.black)
-            Text(remainingPercent.map(String.init) ?? "—")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(readoutColor)
-                .offset(x: textOffset)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipShape(tabShape)
-        .accessibilityLabel(accessibilityLabel)
+        Text(remainingPercent.map(String.init) ?? "—")
+            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(readoutColor)
+            .frame(minWidth: 24)
+            .accessibilityLabel(
+                side == .left
+                    ? "Weekly quota remaining \(percentText)"
+                    : "5-hour quota remaining \(percentText)"
+            )
     }
 }

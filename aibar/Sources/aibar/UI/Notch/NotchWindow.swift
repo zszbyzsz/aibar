@@ -37,7 +37,6 @@ final class NotchWindowController: NSObject, ObservableObject {
     /// continuously changing the measured height and retargeting the window.
     fileprivate static let expandedWidth: CGFloat = 720
     private static let initialExpandedHeight: CGFloat = 320
-    private static let idleFallbackSize = CGSize(width: 170, height: 34)
 
     private var closeWorkItem: DispatchWorkItem?
     /// A status-item click begins outside this panel's tracking view. Keep
@@ -214,7 +213,10 @@ final class NotchWindowController: NSObject, ObservableObject {
     private func recomputeGeometry() {
         guard let screen = NotchGeometry.targetScreen() else { return }
         let frame = screen.frame
-        idleFrame = NotchGeometry.rect(on: screen, fallbackSize: Self.idleFallbackSize)
+        idleFrame = NotchGeometry.rect(
+            on: screen,
+            fallbackSize: NotchGeometry.softwareCapsuleSize(on: screen)
+        )
 
         screenMidX = frame.midX
         screenMaxY = frame.maxY

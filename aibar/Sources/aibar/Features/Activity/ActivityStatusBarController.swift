@@ -142,10 +142,9 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     private static let pollIntervalExpanded: TimeInterval = 2
     /// Every row — running or completed — keeps a fixed height so the spring
     /// grow-in transition has its vertical frame before SwiftUI lays content
-    /// out. Width is intentionally absent here: on a notched Mac it comes from
-    /// the physical cutout, and this size is used only when macOS reports no
-    /// notch (for example on an external monitor).
-    private static let fallbackCapsuleSize = CGSize(width: 190, height: 32)
+    /// out. Width comes from the physical cutout or the shared adaptive
+    /// software-capsule geometry on a display without one.
+    private static let rowHeight: CGFloat = 32
     static let rowSpacing: CGFloat = 4
     /// However many projects are genuinely running in parallel, the
     /// expanded stack only ever shows the `maxRunningRows` most recently
@@ -716,11 +715,12 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         let height = stackHeight(forRowCount: displayedRowCount)
         guard let screen = NotchGeometry.targetScreen() else {
             return CGRect(origin: .zero, size: CGSize(
-                width: Self.fallbackCapsuleSize.width,
+                width: 190,
                 height: height
             ))
         }
-        let notch = NotchGeometry.rect(on: screen, fallbackSize: Self.fallbackCapsuleSize)
+        let softwareCapsuleSize = NotchGeometry.softwareCapsuleSize(on: screen)
+        let notch = NotchGeometry.rect(on: screen, fallbackSize: softwareCapsuleSize)
         let width = notch.width
         let x = notch.midX - width / 2
         // A hard backstop against the display itself, not a size the stack is
@@ -728,15 +728,15 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
         // un-clamped height well under any real screen.
         let clampedHeight = min(height, NotchGeometry.availableHeightBelow(
             notch: notch, screenFrame: screen.frame,
-            gap: Self.gapBelowNotch, minimum: Self.fallbackCapsuleSize.height
+            gap: Self.gapBelowNotch, minimum: Self.rowHeight
         ))
         let y = notch.minY - Self.gapBelowNotch - clampedHeight
         return CGRect(x: x, y: y, width: width, height: clampedHeight)
     }
 
     private func stackHeight(forRowCount rowCount: Int) -> CGFloat {
-        guard rowCount > 0 else { return Self.fallbackCapsuleSize.height }
-        return CGFloat(rowCount) * Self.fallbackCapsuleSize.height
+        guard rowCount > 0 else { return Self.rowHeight }
+        return CGFloat(rowCount) * Self.rowHeight
             + CGFloat(rowCount - 1) * Self.rowSpacing
     }
 

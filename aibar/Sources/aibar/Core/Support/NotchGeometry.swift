@@ -7,11 +7,136 @@ import AppKit
 /// (the notch "growing" a capsule beneath it) rather than two panels that
 /// merely happen to sit nearby.
 enum NotchGeometry {
+    struct QuotaBarLayout: Equatable {
+        let frame: CGRect
+        let sideContentWidth: CGFloat
+        let centerWidth: CGFloat
+    }
+
     /// Extra hover room immediately below the camera housing. The system safe
     /// area describes the physical cutout only; extending downward makes the
     /// otherwise invisible trigger much easier to acquire without changing
     /// the width reported by macOS.
     private static let hoverExtensionBelow: CGFloat = 10
+
+    /// The software capsule used on Macs and displays without a camera
+    /// housing. Its proportions follow the range of physical notch widths
+    /// macOS reports on current 13/14/16-inch layouts, while staying compact
+    /// on small displays and avoiding an oversized bar on wide desktop
+    /// monitors. Callers share this value so the quota readout, activity
+    /// capsule, and dashboard hotzone never drift to different fallback
+    /// widths again.
+    static func softwareCapsuleSize(
+        screenFrame: CGRect, backingScaleFactor: CGFloat
+    ) -> CGSize {
+        let scale = backingScaleFactor.isFinite && backingScaleFactor > 0
+            ? backingScaleFactor
+            : 1
+        // These logical-width anchors mirror the compact camera-housing
+        // widths reported by representative 13/14/16-inch layouts. Linear
+        // interpolation avoids model-name checks (and keeps working under
+        // scaled resolutions), while the endpoints keep arbitrary desktop
+        // monitors inside the same proven compact range.
+        let widthAnchors: [(screen: CGFloat, capsule: CGFloat)] = [
+            (1_280, 176),
+            (1_470, 176),
+            (1_512, 190),
+            (1_728, 204),
+        ]
+        let clampedScreenWidth = min(1_728, max(1_280, screenFrame.width))
+        let upperIndex = widthAnchors.firstIndex {
+            $0.screen >= clampedScreenWidth
+        } ?? widthAnchors.count - 1
+        let interpolatedWidth: CGFloat
+        if upperIndex == 0 {
+            interpolatedWidth = widthAnchors[0].capsule
+        } else {
+            let lower = widthAnchors[upperIndex - 1]
+            let upper = widthAnchors[upperIndex]
+            let progress = (clampedScreenWidth - lower.screen)
+                / (upper.screen - lower.screen)
+            interpolatedWidth = lower.capsule
+                + (upper.capsule - lower.capsule) * progress
+        }
+        let pixelAlignedWidth = (interpolatedWidth * scale).rounded() / scale
+        return CGSize(width: pixelAlignedWidth, height: 32)
+    }
+
+    static func softwareCapsuleSize(on screen: NSScreen) -> CGSize {
+        softwareCapsuleSize(
+            screenFrame: screen.frame,
+            backingScaleFactor: screen.backingScaleFactor
+        )
+    }
+
+    static func softwareCapsuleFrame(
+        screenFrame: CGRect, backingScaleFactor: CGFloat
+    ) -> CGRect {
+        let size = softwareCapsuleSize(
+            screenFrame: screenFrame,
+            backingScaleFactor: backingScaleFactor
+        )
+        return CGRect(
+            x: screenFrame.midX - size.width / 2,
+            y: screenFrame.maxY - size.height,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    static func softwareCapsuleFrame(on screen: NSScreen) -> CGRect {
+        softwareCapsuleFrame(
+            screenFrame: screen.frame,
+            backingScaleFactor: screen.backingScaleFactor
+        )
+    }
+
+    /// One contiguous frame for the complete top quota bar. A real camera
+    /// housing becomes the exact black center of the bar, with one content
+    /// wing appended to either side. A display without a housing uses the
+    /// shared software-capsule frame and divides that same width between both
+    /// readouts and a flexible center. Rendering this as one window avoids
+    /// seams and ordering races between independently composited panels.
+    static func quotaBarLayout(
+        physicalRect: CGRect?,
+        screenFrame: CGRect,
+        backingScaleFactor: CGFloat,
+        physicalSideWidth: CGFloat = 28,
+        softwareSideWidth: CGFloat = 40
+    ) -> QuotaBarLayout {
+        if let physicalRect {
+            let sideWidth = max(0, physicalSideWidth)
+            return QuotaBarLayout(
+                frame: CGRect(
+                    x: physicalRect.minX - sideWidth,
+                    y: physicalRect.minY,
+                    width: physicalRect.width + sideWidth * 2,
+                    height: physicalRect.height
+                ),
+                sideContentWidth: sideWidth,
+                centerWidth: physicalRect.width
+            )
+        }
+
+        let frame = softwareCapsuleFrame(
+            screenFrame: screenFrame,
+            backingScaleFactor: backingScaleFactor
+        )
+        let sideWidth = min(max(0, softwareSideWidth), frame.width / 2)
+        return QuotaBarLayout(
+            frame: frame,
+            sideContentWidth: sideWidth,
+            centerWidth: max(0, frame.width - sideWidth * 2)
+        )
+    }
+
+    static func quotaBarLayout(on screen: NSScreen) -> QuotaBarLayout {
+        quotaBarLayout(
+            physicalRect: physicalRect(on: screen),
+            screenFrame: screen.frame,
+            backingScaleFactor: screen.backingScaleFactor
+        )
+    }
 
     /// The display that should own every notch-attached surface. Accessory
     /// apps do not reliably have a key window, so `NSScreen.main` can be nil or
@@ -103,52 +228,6 @@ enum NotchGeometry {
             y: screenFrame.maxY - fallbackSize.height,
             width: fallbackSize.width,
             height: fallbackSize.height
-        )
-    }
-
-    /// Frames for compact, always-visible readouts immediately beside the
-    /// camera housing.  The height comes from the same safe-area-derived
-    /// notch rect used by the dashboard, rather than a hard-coded menu-bar
-    /// height, so it stays flush on each MacBook display configuration.
-    static func sideFrames(
-        on screen: NSScreen, width: CGFloat, inset: CGFloat = 0,
-        fallbackSize: CGSize
-    ) -> (left: CGRect, right: CGRect) {
-        let notch = rect(on: screen, fallbackSize: fallbackSize)
-        // `rect` extends 10pt below the cutout for the dashboard's easier
-        // hover target. The side readouts intentionally use the physical
-        // safe-area height itself, as they live alongside—not below—the
-        // camera housing.
-        let height = physicalRect(on: screen)?.height ?? notch.height
-        let y = screen.frame.maxY - height
-        return (
-            left: CGRect(x: notch.minX - width + inset, y: y, width: width, height: height),
-            right: CGRect(x: notch.maxX - inset, y: y, width: width, height: height)
-        )
-    }
-
-    /// The software-only black bridge that stands in for the camera housing
-    /// in macOS screenshots. It uses only the system menu-bar thickness (not
-    /// the full safe area or hover target) and returns nil on displays without
-    /// a real notch, so an external monitor never gains a synthetic cutout.
-    static func cameraBridgeFrame(on screen: NSScreen) -> CGRect? {
-        guard let physicalRect = physicalRect(on: screen) else { return nil }
-
-        return cameraBridgeFrame(
-            notch: physicalRect,
-            screenFrame: screen.frame,
-            physicalHeight: min(physicalRect.height, NSStatusBar.system.thickness)
-        )
-    }
-
-    static func cameraBridgeFrame(
-        notch: CGRect, screenFrame: CGRect, physicalHeight: CGFloat
-    ) -> CGRect {
-        CGRect(
-            x: notch.minX,
-            y: screenFrame.maxY - physicalHeight,
-            width: notch.width,
-            height: physicalHeight
         )
     }
 

@@ -67,6 +67,64 @@ final class NotchGeometryTests: XCTestCase {
         XCTAssertEqual(hover, CGRect(x: 645, y: 966, width: 190, height: 34))
     }
 
+    func testSoftwareCapsuleAdaptsAcrossRepresentativeDisplayWidths() {
+        let cases: [(screenWidth: CGFloat, scale: CGFloat, expectedWidth: CGFloat)] = [
+            (1280, 2, 176),
+            (1470, 2, 176),
+            (1512, 2, 190),
+            (1728, 2, 204),
+            (1920, 1, 204),
+        ]
+
+        for item in cases {
+            let size = NotchGeometry.softwareCapsuleSize(
+                screenFrame: CGRect(x: 0, y: 0, width: item.screenWidth, height: 900),
+                backingScaleFactor: item.scale
+            )
+            XCTAssertEqual(size.width, item.expectedWidth, accuracy: 0.001)
+            XCTAssertEqual(size.height, rowHeight, accuracy: 0.001)
+        }
+    }
+
+    func testSoftwareCapsuleFrameIsCenteredAtTheTopOfAnyDisplayOrigin() {
+        let frame = NotchGeometry.softwareCapsuleFrame(
+            screenFrame: CGRect(x: -1920, y: 982, width: 1920, height: 1080),
+            backingScaleFactor: 1
+        )
+
+        XCTAssertEqual(frame, CGRect(x: -1062, y: 2030, width: 204, height: 32))
+    }
+
+    func testPhysicalQuotaBarFillsTheEntireNotchAndAddsBothSidesOnce() {
+        let physical = CGRect(x: 663.5, y: 950, width: 185, height: 32)
+        let layout = NotchGeometry.quotaBarLayout(
+            physicalRect: physical,
+            screenFrame: screen,
+            backingScaleFactor: 2
+        )
+
+        XCTAssertEqual(layout.frame, CGRect(x: 635.5, y: 950, width: 241, height: 32))
+        XCTAssertEqual(layout.sideContentWidth, 28)
+        XCTAssertEqual(layout.centerWidth, physical.width)
+        XCTAssertEqual(
+            layout.sideContentWidth * 2 + layout.centerWidth,
+            layout.frame.width,
+            accuracy: 0.001
+        )
+    }
+
+    func testNoNotchQuotaBarUsesOneCompleteSoftwareCapsule() {
+        let layout = NotchGeometry.quotaBarLayout(
+            physicalRect: nil,
+            screenFrame: screen,
+            backingScaleFactor: 2
+        )
+
+        XCTAssertEqual(layout.frame, CGRect(x: 661, y: 950, width: 190, height: 32))
+        XCTAssertEqual(layout.sideContentWidth, 40)
+        XCTAssertEqual(layout.centerWidth, 110)
+    }
+
     func testPhysicalNotchHandlesANonZeroScreenOrigin() {
         let rect = NotchGeometry.physicalRect(
             screenFrame: CGRect(x: -1728, y: 982, width: 1728, height: 1117),
@@ -143,14 +201,4 @@ final class NotchGeometryTests: XCTestCase {
         )
     }
 
-    func testCameraBridgeUsesOnlyTheMenuBarThickness() {
-        XCTAssertEqual(
-            NotchGeometry.cameraBridgeFrame(
-                notch: notch,
-                screenFrame: screen,
-                physicalHeight: 22
-            ),
-            CGRect(x: 661, y: 960, width: 190, height: 22)
-        )
-    }
 }
