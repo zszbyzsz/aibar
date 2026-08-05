@@ -17,6 +17,43 @@ final class UsageScannerTests: XCTestCase {
         XCTAssertFalse(UsageScanner.canReadCacheVersion(6))
     }
 
+    func testCurrentCacheIsVersionedAwayFromLegacyWriters() {
+        XCTAssertEqual(UsageScanner.currentCacheFilename, "usage-cache-v9.json")
+        XCTAssertEqual(UsageScanner.legacyCacheFilename, "usage-cache.json")
+        XCTAssertNotEqual(UsageScanner.currentCacheFilename, UsageScanner.legacyCacheFilename)
+    }
+
+    func testMCPBackfillPreservesLegacySummaryAndAddsOnlyMCPFields() throws {
+        let url = try writeFixture([
+            #"{"timestamp":"2026-07-20T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":99}}}}"#,
+            #"{"timestamp":"2026-07-20T10:02:30Z","type":"event_msg","payload":{"type":"mcp_tool_call_end","invocation":{"server":"figma","tool":"get_design_context"}}}"#,
+            #"{"timestamp":"2026-07-21T09:00:00Z","type":"event_msg","payload":{"type":"mcp_tool_call_end","invocation":{"server":"figma","tool":"get_screenshot"}}}"#,
+            #"{"timestamp":"2026-07-21T09:01:00Z","type":"event_msg","payload":{"type":"mcp_tool_call_end","invocation":{"server":"github","tool":"get_pr"}}}"#,
+        ])
+        let legacy = FileSummary(
+            endedAt: "2026-07-21T09:01:00Z",
+            usage: ["total_tokens": 42],
+            usageByModel: ["gpt-5.6-sol": ["total_tokens": 42]],
+            limitsByKind: [:],
+            planType: "Pro",
+            planAt: nil,
+            project: "aibar",
+            toolCallCount: 7,
+            filesChangedCount: 3
+        )
+
+        let result = try XCTUnwrap(UsageScanner().backfillMCPUsage(in: legacy, from: url))
+
+        XCTAssertEqual(result.usage, legacy.usage)
+        XCTAssertEqual(result.project, legacy.project)
+        XCTAssertEqual(result.toolCallCount, legacy.toolCallCount)
+        XCTAssertEqual(result.filesChangedCount, legacy.filesChangedCount)
+        XCTAssertEqual(result.mcpCallCount, 3)
+        XCTAssertEqual(result.mcpUsage, ["figma": 2, "github": 1])
+        XCTAssertEqual(result.dailyMCPUsage["2026-07-20"], ["figma": 1])
+        XCTAssertEqual(result.dailyMCPUsage["2026-07-21"], ["figma": 1, "github": 1])
+    }
+
     func testLegacyCacheSummaryDecodesWithoutNewToolCounters() throws {
         // v7 caches contain real token/project summaries but predate the two
         // optional per-tool fields. A missing field must not invalidate the

@@ -7,6 +7,7 @@ import Foundation
 final class UsageScanner {
     private let sessionRoots: [URL]
     private let cachePath: URL
+    private let legacyCachePath: URL
     private let usageKeys = [
         "input_tokens", "cached_input_tokens", "cache_write_input_tokens",
         "output_tokens", "reasoning_output_tokens", "total_tokens",
@@ -21,6 +22,11 @@ final class UsageScanner {
     // atomically writing the upgraded cache.
     private static let cacheVersion = 9
     private static let compatibleCacheVersions: Set<Int> = [7, 8, cacheVersion]
+    /// Schema-versioned cache names prevent an older installed aibar from
+    /// overwriting a newer build's richer summaries while both are running.
+    /// The unversioned file remains a read-only migration source.
+    static var currentCacheFilename: String { "usage-cache-v\(cacheVersion).json" }
+    static let legacyCacheFilename = "usage-cache.json"
 
     static func canReadCacheVersion(_ version: Int) -> Bool {
         compatibleCacheVersions.contains(version)
@@ -36,7 +42,8 @@ final class UsageScanner {
         let cacheDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Caches/aibarUsage")
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-        cachePath = cacheDir.appendingPathComponent("usage-cache.json")
+        cachePath = cacheDir.appendingPathComponent(Self.currentCacheFilename)
+        legacyCachePath = cacheDir.appendingPathComponent(Self.legacyCacheFilename)
     }
 
     func classifyWindow(_ minutes: Int) -> String? {
@@ -52,11 +59,14 @@ final class UsageScanner {
     }
 
     private func readCache() -> CacheFile {
-        guard let data = try? Data(contentsOf: cachePath),
-              let cache = try? JSONDecoder().decode(CacheFile.self, from: data),
-              Self.canReadCacheVersion(cache.version)
-        else { return CacheFile(version: Self.cacheVersion, files: [:]) }
-        return cache
+        for path in [cachePath, legacyCachePath] {
+            guard let data = try? Data(contentsOf: path),
+                  let cache = try? JSONDecoder().decode(CacheFile.self, from: data),
+                  Self.canReadCacheVersion(cache.version)
+            else { continue }
+            return cache
+        }
+        return CacheFile(version: Self.cacheVersion, files: [:])
     }
 
     private func writeCache(_ cache: CacheFile) {
@@ -155,6 +165,7 @@ final class UsageScanner {
         #""type":"patch_apply_end""#,
         #""rate_limits""#,
     ].map { Data($0.utf8) }
+    private static let mcpCompletionMarker = Data(#""type":"mcp_tool_call_end""#.utf8)
 
     /// How far into a line the triage above has to look. Every marker lives in
     /// the line's envelope — timestamp, top-level type, payload type — which
@@ -338,6 +349,57 @@ final class UsageScanner {
         }
     }
 
+    /// Upgrading v8 only needs to add MCP counters; every other summary field
+    /// is already complete. Decode just MCP completion lines and preserve the
+    /// cached token/project/quota work instead of reparsing every useful event
+    /// in years of transcripts.
+    func backfillMCPUsage(in summary: FileSummary, from url: URL) -> FileSummary? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        var result = summary
+        result.mcpCallCount = 0
+        result.mcpUsage = [:]
+        result.dailyMCPUsage = [:]
+
+        func consume(_ lineData: Data) {
+            let envelope = lineData.count > Self.envelopeBytes
+                ? lineData.prefix(Self.envelopeBytes)
+                : lineData[...]
+            guard envelope.range(of: Self.mcpCompletionMarker) != nil,
+                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                  let payload = obj["payload"] as? [String: Any],
+                  payload["type"] as? String == "mcp_tool_call_end",
+                  let invocation = payload["invocation"] as? [String: Any],
+                  let server = (invocation["server"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !server.isEmpty
+            else { return }
+
+            let timestamp = obj["timestamp"] as? String ?? summary.endedAt
+            let dateKey = UsageAggregation.isoDateOnly(Formatting.parseISODate(timestamp) ?? Date())
+            result.mcpCallCount += 1
+            result.mcpUsage[server, default: 0] += 1
+            result.dailyMCPUsage[dateKey, default: [:]][server, default: 0] += 1
+        }
+
+        // Search directly for the rare completion marker, then decode only
+        // the containing JSON line. Walking and allocating every line made a
+        // one-time migration scale with all transcript output (often several
+        // gigabytes) instead of with the handful of MCP events we need.
+        var searchStart = data.startIndex
+        while searchStart < data.endIndex,
+              let markerRange = data.range(
+                  of: Self.mcpCompletionMarker,
+                  in: searchStart..<data.endIndex
+              ) {
+            let lineStart = data[..<markerRange.lowerBound].lastIndex(of: 0x0A)
+                .map { data.index(after: $0) } ?? data.startIndex
+            let lineEnd = data[markerRange.upperBound...].firstIndex(of: 0x0A) ?? data.endIndex
+            consume(Data(data[lineStart..<lineEnd]))
+            searchStart = lineEnd < data.endIndex ? data.index(after: lineEnd) : data.endIndex
+        }
+
+        return result
+    }
+
     /// Full scan: reuses cached per-file summaries for transcripts whose mtime/size are
     /// unchanged and retains every locally available transcript, including archives.
     /// The cache-version bump deliberately rebuilds older end-of-session summaries.
@@ -362,9 +424,12 @@ final class UsageScanner {
 
             if let existing = cache.files[key],
                existing.mtime == mtime,
-               existing.size == size,
-               !needsMCPBackfill {
-                continue
+               existing.size == size {
+                if !needsMCPBackfill { continue }
+                if let summary = backfillMCPUsage(in: existing.summary, from: url) {
+                    cache.files[key] = CachedEntry(mtime: mtime, size: size, summary: summary)
+                    continue
+                }
             }
             if let summary = parseSession(url: url) {
                 cache.files[key] = CachedEntry(mtime: mtime, size: size, summary: summary)
