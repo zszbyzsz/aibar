@@ -182,8 +182,8 @@ private struct UpdatePillContent: View {
     }
 }
 
-/// The pill's content while a project is actively running — pulse dot, phase
-/// icon, project name, live token count, and elapsed time.
+/// The pill's content while a project is actively running — animated phase
+/// icon, project name, live context counts, and elapsed time.
 private struct ActivePillContent: View {
     var activity: ProjectActivity
     var lang: AppLanguage
@@ -219,16 +219,22 @@ private struct ActivePillContent: View {
 
     @ViewBuilder
     private var phaseMarker: some View {
-        switch activity.phase {
-        case .usingScreen:
-            // The composed window + cursor badge is intentionally a single
-            // leading marker: unlike the ordinary pulse + phase pair, it
-            // reads as a distinct "Codex is operating the screen" state.
-            CodexScreenToolBadge(size: 20)
-        default:
-            ActivityPulseDot()
-            CodexActivityPhaseIcon(phase: activity.phase, size: 10)
-        }
+        // The icon itself carries liveness now. Keeping one fixed marker slot
+        // avoids the old pulse dot consuming scarce width, and guarantees the
+        // screen-control symbol is rendered through the exact same shared
+        // component as the dashboard status view.
+        CodexActivityPhaseIcon(
+            phase: activity.phase,
+            size: activity.phase == .usingScreen ? 18 : 12,
+            animate: true
+        )
+        .foregroundStyle(
+            activity.phase == .usingScreen
+                ? Color.notchScreenAccent
+                : Color.notchAccent
+        )
+        .frame(width: 20, height: 20)
+        .fixedSize()
     }
 
     /// One shared origin for every row's elapsed-time clock. Anchoring each
@@ -292,7 +298,8 @@ private struct CompletedPillContent: View {
 /// `contentTransition(.numericText())` is what actually sells "flowing" —
 /// digits roll rather than snap — but that transition only exists on macOS
 /// 14+, so it's applied conditionally rather than dropping support for the
-/// package's macOS 13 floor.
+/// package's macOS 13 floor. Current context sits above the conversation-wide
+/// total so both remain legible at the notch's physical width.
 private struct ContextTokenReadout: View {
     var current: Int
     var total: Int
@@ -310,7 +317,6 @@ private struct ContextTokenReadout: View {
                 labels(current: currentLabel, total: totalLabel)
             }
         }
-        .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
         .animation(.easeOut(duration: 0.3), value: current)
         .animation(.easeOut(duration: 0.3), value: total)
         .help(L.activityContextHint(lang))
@@ -321,11 +327,16 @@ private struct ContextTokenReadout: View {
     }
 
     private func labels(current: String, total: String) -> some View {
-        HStack(spacing: 2) {
-            Text(current).foregroundStyle(Color.notchAccent)
-            Text("/").foregroundStyle(Color.notchMutedInk)
-            Text(total).foregroundStyle(Color.notchInk)
+        VStack(alignment: .trailing, spacing: -1) {
+            Text(current)
+                .font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Color.notchAccent)
+            Text(total)
+                .font(.system(size: 7.5, weight: .medium).monospacedDigit())
+                .foregroundStyle(Color.notchMutedInk)
         }
+        .frame(minWidth: 30, alignment: .trailing)
+        .fixedSize()
     }
 }
 
@@ -380,33 +391,5 @@ private extension View {
             .contentShape(Capsule())
             .scaleEffect(isPressed ? 0.96 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: isPressed)
-    }
-}
-
-/// The "still running" heartbeat on every active row.
-///
-/// The glow is a *fixed* radius, with only opacity and scale breathing. An
-/// earlier version animated the shadow's radius instead, which looks the same
-/// but costs enormously more: a blur radius that changes every frame can't be
-/// cached, so each dot re-rasterized its glow offscreen ~60 times a second —
-/// and the whole point of the expanded stack is that ten of these are on
-/// screen at once, all animating forever. Opacity and scale are composited
-/// from an already-rasterized layer, so the same breathing read is effectively
-/// free no matter how many rows are showing.
-private struct ActivityPulseDot: View {
-    @State private var isBright = false
-
-    var body: some View {
-        Circle()
-            .fill(Color.notchAccent)
-            .frame(width: 6, height: 6)
-            .shadow(color: Color.notchAccent.opacity(0.75), radius: 3)
-            .opacity(isBright ? 1 : 0.5)
-            .scaleEffect(isBright ? 1 : 0.8)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                    isBright = true
-                }
-            }
     }
 }

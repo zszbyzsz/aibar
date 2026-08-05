@@ -132,17 +132,14 @@ final class ActivityStatusBarController: NSObject, ObservableObject {
     /// while hidden so re-enabling immediately reflects current activity.
     private(set) var isEnabled = ActivityStatusBarController.loadEnabledPreference()
 
-    /// Loose enough not to matter perf-wise or read as needlessly chatty —
-    /// this only ever does a bounded SQLite read plus a bounded tail read of
-    /// a handful of JSONL files. Used while collapsed; `pollIntervalExpanded`
-    /// takes over once someone's actually looking at the stack.
-    private static let pollIntervalCollapsed: TimeInterval = 5
-    /// While the stack is expanded (someone's pointer is on it, actively
-    /// reading), token counts and elapsed times updating every 2s reads as
-    /// distracting flicker rather than useful liveness — slowing to once
-    /// every 10s keeps the numbers moving without them visibly jittering
-    /// under a closer look.
-    private static let pollIntervalExpanded: TimeInterval = 10
+    /// Match the visible dashboard's near-live cadence closely enough to catch
+    /// short screen-control calls. The monitor only performs bounded metadata
+    /// and rollout-tail reads, and `isPolling` still prevents overlap.
+    private static let pollIntervalCollapsed: TimeInterval = 1.5
+    /// Keep the phase equally trustworthy while someone is inspecting the
+    /// expanded stack. The fixed two-line token readout no longer shifts the
+    /// surrounding row as values change, so the faster refresh stays calm.
+    private static let pollIntervalExpanded: TimeInterval = 2
     /// Every row — running or completed — keeps a fixed height so the spring
     /// grow-in transition has its vertical frame before SwiftUI lays content
     /// out. Width is intentionally absent here: on a notched Mac it comes from
