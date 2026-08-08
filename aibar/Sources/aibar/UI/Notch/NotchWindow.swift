@@ -273,10 +273,10 @@ final class NotchWindowController: NSObject, ObservableObject {
             store.startVisibleCodexRefresh()
             // Claude Code's session/weekly rings come from a real network call
             // against Anthropic's undocumented usage endpoint (see
-            // ClaudeOAuthUsage) rather than a local file, so it only fires once
-            // per visit here — never on the local-file timer above, which
-            // would hammer an endpoint that already rate-limits hard.
-            store.refreshRemoteQuotaOnVisit()
+            // ClaudeOAuthUsage) rather than a local file. The visit-triggered
+            // call here is complemented by UsageStore's hourly background
+            // refresh, never by the rapid local-file timer above.
+            store.refreshRemoteQuota()
         } else {
             store.stopVisibleCodexRefresh()
         }

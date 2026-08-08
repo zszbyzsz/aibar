@@ -13,7 +13,7 @@ A local-first macOS dashboard for AI coding usage. aibar brings Codex session re
 ## Features
 
 - **Notch dashboard and menu-bar controls** — Hover over the notch or click the menu-bar trend icon to open the dashboard. Left-click toggles it; right-click exposes the activity capsule, screenshot command, update check, and quit action. aibar does not occupy the Dock.
-- **Accurate usage totals** — Today and 30-day API-equivalent cost, 30-day tokens, latest-session tokens, and recent trends are calculated from the same locally scanned Codex sessions.
+- **Accurate usage totals** — Today and 30-day API-equivalent cost, 30-day tokens, latest-session tokens, and recent trends are calculated from the same locally scanned Codex sessions; while the app is running, it also refreshes live quota hourly even without an active session.
 - **Usage overview** — A 154-day token-intensity heatmap includes the exact daily total on hover, a compact 30-day daily token average, reset-credit expiry markers, and session (5h) and weekly (7d) quota meters.
 - **Model and project breakdowns** — Model pricing, cost, token share, input/cached/output rates, and project totals are recomputed from the loaded sessions. Pricing is refreshed from the public source and falls back to a local cache when necessary.
 - **Top projects** — Local projects are ranked by tokens and expand to show their model shares, tool-call totals, and file-edit totals.

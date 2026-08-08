@@ -3,12 +3,11 @@ import Combine
 
 @MainActor
 final class UsageStore: ObservableObject {
-    /// The idle-state cadence — nobody's looking at the panel most of the
-    /// time, so there's no point re-scanning local session logs more than
-    /// every half hour. Whenever the panel actually opens, NotchWindowController
-    /// triggers its own immediate refresh on top of this, independent of
-    /// wherever this timer happens to be in its cycle.
-    static let refreshInterval: TimeInterval = 30 * 60
+    /// Keep the account quota current while the menu-bar app is running, even
+    /// when no Codex session is active and the dashboard remains hidden.
+    /// Opening the panel still triggers an immediate refresh independently of
+    /// this hourly background cadence.
+    static let refreshInterval: TimeInterval = 60 * 60
     /// While the dashboard is visible, poll the lightweight SQLite/WAL file
     /// signature rather than repeatedly parsing every historical transcript.
     /// Codex updates this state as soon as it records a `token_count` event,
@@ -69,7 +68,7 @@ final class UsageStore: ObservableObject {
     private var claudeRemoteQuota: ClaudeOAuthUsage.Result?
     private var lastClaudeOAuthFetch: Date?
     /// The oauth/usage endpoint is undocumented and rate-limits hard, so this
-    /// is a floor under how often refreshRemoteQuotaOnVisit() will actually
+    /// is a floor under how often refreshRemoteQuota() will actually
     /// hit the network, independent of how often the caller asks.
     private static let claudeOAuthMinInterval: TimeInterval = 60
     /// Snapshot of Codex's server-owned token activity and Full reset credits.
@@ -99,7 +98,14 @@ final class UsageStore: ObservableObject {
         Task { await refresh(eagerly: true) }
         refreshCodexAccountMetadataIfNeeded()
         timer = Timer.scheduledTimer(withTimeInterval: Self.refreshInterval, repeats: true) { [weak self] _ in
-            Task { await self?.refresh() }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // The local scan alone cannot see account-owned quota details.
+                // Refresh those first so an idle app still receives the latest
+                // Codex/Claude limits once per hour.
+                self.refreshRemoteQuota()
+                await self.refresh()
+            }
         }
     }
 
@@ -240,7 +246,7 @@ final class UsageStore: ObservableObject {
             result.pricingRates = prices
             // The local scan itself never has session/weekly limits (see
             // ClaudeCodeUsageScanner's header comment) — graft on whatever
-            // refreshRemoteQuotaOnVisit() last fetched from the live API.
+            // refreshRemoteQuota() last fetched from the live API.
             result.session = claudeRemoteQuota?.session
             result.weekly = claudeRemoteQuota?.weekly
             result.weeklyKind = claudeRemoteQuota?.weekly != nil ? "weekly" : nil
@@ -311,12 +317,11 @@ final class UsageStore: ObservableObject {
         payload = result
     }
 
-    /// Hits the live `/api/oauth/usage` endpoint — call this once per actual
-    /// dashboard visit (NotchWindowController does, on hover-reveal), never
-    /// from the 8s/30s local-file timers. Rate-limited client-side on top of
-    /// that so rapid hover in/out doesn't hammer an endpoint that already
-    /// 429s aggressively server-side.
-    func refreshRemoteQuotaOnVisit() {
+    /// Refreshes the selected provider's live quota. Called when the dashboard
+    /// opens and by the hourly background timer, never by the rapid local-file
+    /// polling loop. The client-side throttle keeps rapid hover changes from
+    /// hammering Claude's rate-limited endpoint.
+    func refreshRemoteQuota() {
         guard !demoMode else { return }
         if provider == .codex {
             refreshCodexAccountMetadataIfNeeded()
