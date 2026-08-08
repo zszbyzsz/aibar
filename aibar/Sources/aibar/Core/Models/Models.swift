@@ -140,6 +140,53 @@ struct CachedEntry: Codable {
 struct CacheFile: Codable {
     var version: Int
     var files: [String: CachedEntry]
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case files
+    }
+
+    init(version: Int, files: [String: CachedEntry]) {
+        self.version = version
+        self.files = files
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        if let version = try? container.decode(Int.self, forKey: .version) {
+            self.version = version
+        } else {
+            let rawVersion = try container.decode(String.self, forKey: .version)
+            guard let version = Self.parseVersion(rawVersion) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .version,
+                    in: container,
+                    debugDescription: "Expected a numeric cache version or a v-prefixed numeric version."
+                )
+            }
+            self.version = version
+        }
+
+        self.files = try container.decode([String: CachedEntry].self, forKey: .files)
+    }
+
+    private static func parseVersion(_ rawVersion: String) -> Int? {
+        let normalized = rawVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        let numericPart: Substring
+
+        if normalized.first == "v" || normalized.first == "V" {
+            numericPart = normalized.dropFirst()
+        } else {
+            numericPart = Substring(normalized)
+        }
+
+        guard !numericPart.isEmpty,
+              numericPart.allSatisfy({ $0.isNumber })
+        else { return nil }
+
+        return Int(numericPart)
+    }
 }
 
 struct ModelPrice: Codable {

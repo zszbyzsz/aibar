@@ -17,6 +17,24 @@ final class UsageScannerTests: XCTestCase {
         XCTAssertFalse(UsageScanner.canReadCacheVersion(6))
     }
 
+    func testCacheVersionDecodesNumericAndVPrefixedForms() throws {
+        for rawVersion in ["7", "8", "9", "v7", "V8", "v9"] {
+            let data = Data(#"{"version":"\#(rawVersion)","files":{}}"#.utf8)
+            let cache = try JSONDecoder().decode(CacheFile.self, from: data)
+
+            XCTAssertEqual(cache.version, Int(rawVersion.drop { $0 == "v" || $0 == "V" }))
+            XCTAssertTrue(UsageScanner.canReadCacheVersion(cache.version))
+        }
+
+        let numericData = Data(#"{"version":8,"files":{}}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(CacheFile.self, from: numericData).version, 8)
+    }
+
+    func testCacheVersionRejectsInvalidStringForm() {
+        let data = Data(#"{"version":"release-9","files":{}}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(CacheFile.self, from: data))
+    }
+
     func testCurrentCacheIsVersionedAwayFromLegacyWriters() {
         XCTAssertEqual(UsageScanner.currentCacheFilename, "usage-cache-v9.json")
         XCTAssertEqual(UsageScanner.legacyCacheFilename, "usage-cache.json")
