@@ -264,21 +264,12 @@ final class NotchWindowController: NSObject, ObservableObject {
                 self.onPresentationChange?(false)
             }
         }
-        // The background scan stays deliberately sparse while the panel is
-        // hidden.  Once shown, take an immediate reading and then let
-        // UsageStore watch Codex's local SQLite/WAL metadata for fresh turns.
-        // It re-aggregates only when that state has changed.
+        // Opening the dashboard is a project-access refresh point. The store
+        // also watches project state in the background and keeps its separate
+        // top-of-hour schedule alive while this panel is hidden, so neither
+        // refresh source disables the other.
         if expanded {
-            Task { await store.refresh() }
-            store.startVisibleCodexRefresh()
-            // Claude Code's session/weekly rings come from a real network call
-            // against Anthropic's undocumented usage endpoint (see
-            // ClaudeOAuthUsage) rather than a local file. The visit-triggered
-            // call here is complemented by UsageStore's hourly background
-            // refresh, never by the rapid local-file timer above.
-            store.refreshRemoteQuota()
-        } else {
-            store.stopVisibleCodexRefresh()
+            store.refreshForProjectAccess()
         }
 
         if expanded {

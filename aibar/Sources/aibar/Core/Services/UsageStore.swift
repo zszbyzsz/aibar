@@ -5,15 +5,15 @@ import Combine
 final class UsageStore: ObservableObject {
     /// Keep the account quota current while the menu-bar app is running, even
     /// when no Codex session is active and the dashboard remains hidden.
-    /// Opening the panel still triggers an immediate refresh independently of
-    /// this hourly background cadence.
+    /// The scheduler targets every wall-clock hour, rather than measuring an
+    /// hour from app launch. Project activity independently requests the same
+    /// refresh path whenever Codex writes new state.
     static let refreshInterval: TimeInterval = 60 * 60
-    /// While the dashboard is visible, poll the lightweight SQLite/WAL file
-    /// signature rather than repeatedly parsing every historical transcript.
-    /// Codex updates this state as soon as it records a `token_count` event,
-    /// so this keeps the displayed local usage within one short interval of a
-    /// completed response without any network polling.
-    static let visibleCodexRefreshInterval: TimeInterval = 1.5
+    /// Poll the lightweight SQLite/WAL file signature rather than repeatedly
+    /// parsing every historical transcript. Codex updates this state as soon
+    /// as it records a `token_count` event, so project activity refreshes
+    /// local usage within one short interval of a completed response.
+    static let projectActivityRefreshInterval: TimeInterval = 1.5
 
     @Published var payload = UsagePayload()
     @Published var refreshing = false
@@ -23,6 +23,10 @@ final class UsageStore: ObservableObject {
     @Published var provider: UsageProvider = .codex {
         didSet {
             guard oldValue != provider else { return }
+            // A provider switch is another deliberate visit to that provider's
+            // project data, so do not wait for the next hourly boundary to
+            // populate its live quota.
+            refreshRemoteQuota()
             Task { await refresh() }
         }
     }
@@ -45,10 +49,15 @@ final class UsageStore: ObservableObject {
     private let codexPricing = PricingService()
     private let claudeScanner = ClaudeCodeUsageScanner()
     private let claudePricing = ClaudePricingService()
-    private var timer: Timer?
+    private var hourlyRefreshTimer: Timer?
     private var hasStarted = false
-    private var visibleCodexTimer: Timer?
+    private var projectActivityTimer: Timer?
     private var lastCodexStateFingerprint: CodexStateFingerprint?
+    /// A refresh requested while another scan is in flight must not disappear:
+    /// the in-flight scan may have started before the newer project write or
+    /// before a wall-clock hourly boundary. One follow-up pass coalesces any
+    /// such requests without allowing concurrent transcript parsers.
+    private var refreshPending = false
 
     private struct FileFingerprint: Equatable {
         let modifiedAt: TimeInterval
@@ -96,51 +105,86 @@ final class UsageStore: ObservableObject {
         // data wait for it: `refresh(eagerly:)` publishes a fallback-priced
         // scan first and replaces it as soon as the live rates arrive.
         Task { await refresh(eagerly: true) }
-        refreshCodexAccountMetadataIfNeeded()
-        timer = Timer.scheduledTimer(withTimeInterval: Self.refreshInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                // The local scan alone cannot see account-owned quota details.
-                // Refresh those first so an idle app still receives the latest
-                // Codex/Claude limits once per hour.
-                self.refreshRemoteQuota()
-                await self.refresh()
-            }
-        }
+        refreshRemoteQuota()
+        startProjectActivityRefresh()
+        scheduleNextHourlyRefresh()
     }
 
-    /// Starts an on-screen, local-only refresh loop.  The loop first checks
-    /// Codex's live state DB and its WAL sidecar; it performs the comparatively
-    /// heavier JSONL aggregation only after those files have changed.
-    func startVisibleCodexRefresh() {
-        guard visibleCodexTimer == nil else { return }
+    /// Starts the project-activity refresh layer. It first checks Codex's live
+    /// state DB and its WAL sidecar; it performs the comparatively heavier
+    /// JSONL aggregation only after those files have changed. This remains
+    /// active while the dashboard is hidden so accessing a project and the
+    /// hourly quota cadence are independent, concurrent triggers.
+    private func startProjectActivityRefresh() {
+        guard projectActivityTimer == nil else { return }
         lastCodexStateFingerprint = codexStateFingerprint()
-        visibleCodexTimer = Timer.scheduledTimer(
-            withTimeInterval: Self.visibleCodexRefreshInterval,
+        let timer = Timer(
+            timeInterval: Self.projectActivityRefreshInterval,
             repeats: true
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.refreshVisibleCodexUsageIfNeeded()
+                self?.refreshForProjectActivityIfNeeded()
             }
         }
+        projectActivityTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
-    func stopVisibleCodexRefresh() {
-        visibleCodexTimer?.invalidate()
-        visibleCodexTimer = nil
-        lastCodexStateFingerprint = nil
+    /// Returns the next exact top-of-hour after `date`. Kept separate from
+    /// timer setup both for deterministic tests and so a late wake from sleep
+    /// naturally schedules the following wall-clock hour instead of drifting.
+    static func nextHourlyRefreshDate(after date: Date, calendar: Calendar = .current) -> Date {
+        var components = DateComponents()
+        components.minute = 0
+        components.second = 0
+        return calendar.nextDate(
+            after: date,
+            matching: components,
+            matchingPolicy: .nextTime,
+            direction: .forward
+        ) ?? date.addingTimeInterval(refreshInterval)
     }
 
-    private func refreshVisibleCodexUsageIfNeeded() {
-        guard provider == .codex, !refreshing else { return }
+    private func scheduleNextHourlyRefresh(after date: Date = Date()) {
+        hourlyRefreshTimer?.invalidate()
+        let fireDate = Self.nextHourlyRefreshDate(after: date)
+        let timer = Timer(fire: fireDate, interval: 0, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Schedule from the current time, not from the prior ideal
+                // boundary, so delayed timers after sleep never bunch up.
+                self.scheduleNextHourlyRefresh()
+                self.refreshForScheduledQuotaUpdate()
+            }
+        }
+        hourlyRefreshTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func refreshForProjectActivityIfNeeded() {
+        guard provider == .codex else { return }
         let fingerprint = codexStateFingerprint()
         guard fingerprint != lastCodexStateFingerprint else { return }
         lastCodexStateFingerprint = fingerprint
         // A completed response changes both the local attribution sample and
         // the server-owned daily total. Refresh both sides of that equation;
         // the account fetch has its own one-minute throttle below.
-        refreshCodexAccountMetadataIfNeeded()
+        refreshForProjectAccess()
+    }
+
+    /// The visit-triggered refresh layer. Opening the dashboard and a Codex
+    /// project state change both use this method, while the hourly scheduler
+    /// continues independently. The shared refresh queue coalesces overlap.
+    func refreshForProjectAccess() {
+        guard !demoMode else { return }
+        refreshRemoteQuota()
         Task { await refresh() }
+    }
+
+    /// The fixed hourly quota layer. It deliberately uses the same work as a
+    /// project visit so both sources publish one coherent payload.
+    private func refreshForScheduledQuotaUpdate() {
+        refreshForProjectAccess()
     }
 
     /// `state_5.sqlite` is Codex Desktop's live local thread index; the WAL is
@@ -159,9 +203,9 @@ final class UsageStore: ObservableObject {
             return FileFingerprint(modifiedAt: modifiedAt, size: size)
         }
 
-        // Both paths can coexist after a Codex migration.  Use the same
-        // activity-aware resolver as the live capsule so the visible dashboard
-        // refresh follows the database Codex is actually writing.
+        // Both paths can coexist after a Codex migration. Use the same
+        // activity-aware resolver as the live capsule so project refreshes
+        // follow the database Codex is actually writing.
         let database = CodexActivityMonitor.stateDatabaseURL(in: codexHome)
 
         return CodexStateFingerprint(
@@ -188,10 +232,26 @@ final class UsageStore: ObservableObject {
         // Startup and preview-open can request a refresh in the same run loop.
         // Coalescing them prevents two concurrent parsers from rereading the
         // same large local transcript archive and delaying the first payload.
-        guard !refreshing else { return }
+        // Unlike a simple early return, retain one follow-up pass so an access
+        // event landing during the current scan cannot be lost.
+        guard !refreshing else {
+            refreshPending = true
+            return
+        }
         refreshing = true
         defer { refreshing = false }
 
+        var shouldUseEagerPath = eagerly
+        repeat {
+            refreshPending = false
+            await performRefresh(eagerly: shouldUseEagerPath)
+            // Only app start needs the concurrent cached/fallback price path.
+            // A coalesced follow-up is an ordinary, current-state refresh.
+            shouldUseEagerPath = false
+        } while refreshPending
+    }
+
+    private func performRefresh(eagerly: Bool) async {
         let currentProvider = provider
         switch currentProvider {
         case .codex:
@@ -317,10 +377,10 @@ final class UsageStore: ObservableObject {
         payload = result
     }
 
-    /// Refreshes the selected provider's live quota. Called when the dashboard
-    /// opens and by the hourly background timer, never by the rapid local-file
-    /// polling loop. The client-side throttle keeps rapid hover changes from
-    /// hammering Claude's rate-limited endpoint.
+    /// Refreshes the selected provider's live quota. Called by both the
+    /// wall-clock hourly scheduler and project-access layer. The client-side
+    /// throttle keeps rapid project changes from hammering Claude's
+    /// rate-limited endpoint.
     func refreshRemoteQuota() {
         guard !demoMode else { return }
         if provider == .codex {
