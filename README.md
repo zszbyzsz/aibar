@@ -6,7 +6,7 @@
 
 A local-first macOS dashboard for AI coding usage. aibar brings Codex session records, quota data, project and model statistics, and live activity into the space beneath your MacBook notch and the menu bar. It also provides an annotation tool designed for AI feedback on `fn + 4`—available when you need it and quiet when you do not.
 
-> Version 0.1.12 · macOS 13 Ventura or later · Apple Silicon
+> Version 0.1.13 · macOS 13 Ventura or later · Apple Silicon
 
 ![aibar dashboard](docs/images/dashboard-en.png)
 
@@ -71,11 +71,11 @@ brew update
 brew upgrade --cask aibar
 ```
 
-Packages through `v0.1.12` are ad-hoc signed, so each version has a different macOS privacy identity. After upgrading, grant Screen Recording again if prompted. Moving to the first Developer ID signed release will require one final reauthorization; later releases signed by the same identity will retain that permission.
+Packages through `v0.1.13` are ad-hoc signed, so each version has a different macOS privacy identity. After upgrading, grant Screen Recording again if prompted. Moving to the first Developer ID signed release will require one final reauthorization; later releases signed by the same identity will retain that permission.
 
 ### Download the app
 
-Download [`aibar-0.1.12.zip`](https://github.com/zszbyzsz/aibar/releases/download/v0.1.12/aibar-0.1.12.zip), unzip it, drag `aibar.app` to Applications, and open it.
+Download [`aibar-0.1.13.zip`](https://github.com/zszbyzsz/aibar/releases/download/v0.1.13/aibar-0.1.13.zip), unzip it, drag `aibar.app` to Applications, and open it.
 
 Use a release signed consistently with the same Developer ID to preserve Screen Recording consent through automatic updates. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. If it remains quarantined:
 
@@ -127,13 +127,13 @@ open dist/aibar.app
 
 ```bash
 SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-  ./scripts/package-release.sh 0.1.12
+  ./scripts/package-release.sh 0.1.13
 ```
 
 An Ad-hoc package can be produced only through an explicit opt-in when privacy reauthorization is acceptable:
 
 ```bash
-ALLOW_ADHOC_RELEASE=1 ./scripts/package-release.sh 0.1.12
+ALLOW_ADHOC_RELEASE=1 ./scripts/package-release.sh 0.1.13
 ```
 
 ## License

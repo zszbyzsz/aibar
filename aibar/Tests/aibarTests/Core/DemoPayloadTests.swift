@@ -25,8 +25,8 @@ final class DemoPayloadTests: XCTestCase {
         let payload = UsageStore.demoPayload()
 
         XCTAssertTrue(payload.daily.contains { $0.tokens >= UsageMilestone.billionThreshold })
+        XCTAssertTrue(payload.daily.contains { $0.tokens >= UsageMilestone.onePointFiveBillionThreshold })
         XCTAssertTrue(payload.daily.contains { $0.tokens >= UsageMilestone.fiveBillionThreshold })
-        XCTAssertTrue(payload.daily.contains { $0.tokens >= UsageMilestone.tenBillionThreshold })
 
         guard let activity = payload.activeProject else {
             return XCTFail("Demo payload should include active Goal activity")

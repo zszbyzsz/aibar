@@ -20,25 +20,26 @@ final class UsageTimelineTests: XCTestCase {
         XCTAssertEqual(UsageHeatmapScale.legendPositions, [0, 0.25, 0.5, 0.75, 1])
     }
 
-    func testUsageMilestonesUseInclusiveOneFiveAndTenBillionThresholds() {
+    func testUsageMilestonesUseInclusiveOnePointFiveAndFiveBillionThresholds() {
         XCTAssertEqual(UsageMilestone.level(for: 999_999_999), .none)
         XCTAssertEqual(UsageMilestone.level(for: 1_000_000_000), .billion)
-        XCTAssertEqual(UsageMilestone.level(for: 4_999_999_999), .billion)
+        XCTAssertEqual(UsageMilestone.level(for: 1_499_999_999), .billion)
+        XCTAssertEqual(UsageMilestone.level(for: 1_500_000_000), .onePointFiveBillion)
+        XCTAssertEqual(UsageMilestone.level(for: 4_999_999_999), .onePointFiveBillion)
         XCTAssertEqual(UsageMilestone.level(for: 5_000_000_000), .fiveBillion)
         XCTAssertEqual(UsageMilestone.level(for: 9_999_999_999), .fiveBillion)
-        XCTAssertEqual(UsageMilestone.level(for: 10_000_000_000), .tenBillion)
     }
 
     func testUsageMilestonesMapToDotSparkleAndPulsarCore() {
         XCTAssertEqual(UsageMilestone.none.adornment, .none)
         XCTAssertEqual(UsageMilestone.billion.adornment, .dot)
+        XCTAssertEqual(UsageMilestone.onePointFiveBillion.adornment, .pulsarCore)
         XCTAssertEqual(UsageMilestone.fiveBillion.adornment, .sparkle)
-        XCTAssertEqual(UsageMilestone.tenBillion.adornment, .pulsarCore)
     }
 
-    func testTenBillionMilestoneStaysOutOfTheVisibleLegend() {
+    func testOnePointFiveBillionMilestoneStaysOutOfTheVisibleLegend() {
         XCTAssertEqual(UsageMilestone.visibleLegendTiers, [.billion, .fiveBillion])
-        XCTAssertFalse(UsageMilestone.visibleLegendTiers.contains(.tenBillion))
+        XCTAssertFalse(UsageMilestone.visibleLegendTiers.contains(.onePointFiveBillion))
     }
 
     func testTimelineMarkerLegendUsesEndAndWeeklyRefreshLabels() {

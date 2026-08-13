@@ -76,33 +76,33 @@ enum UsageMilestoneAdornment: Equatable {
     case pulsarCore
 }
 
-/// Visual rewards layered inside the token-driven heatmap cell. The 10B tier
+/// Visual rewards layered inside the token-driven heatmap cell. The 1.5B tier
 /// is intentionally absent from the visible legend: discovering its pulsar
 /// core is part of the reward.
 enum UsageMilestone: Int, Comparable {
     case none
     case billion
+    case onePointFiveBillion
     case fiveBillion
-    case tenBillion
 
     static let billionThreshold = 1_000_000_000
+    static let onePointFiveBillionThreshold = 1_500_000_000
     static let fiveBillionThreshold = 5_000_000_000
-    static let tenBillionThreshold = 10_000_000_000
     static let visibleLegendTiers: [UsageMilestone] = [.billion, .fiveBillion]
 
     var adornment: UsageMilestoneAdornment {
         switch self {
         case .none: return .none
         case .billion: return .dot
+        case .onePointFiveBillion: return .pulsarCore
         case .fiveBillion: return .sparkle
-        case .tenBillion: return .pulsarCore
         }
     }
 
     static func level(for tokens: Int) -> UsageMilestone {
         switch tokens {
-        case tenBillionThreshold...: return .tenBillion
         case fiveBillionThreshold...: return .fiveBillion
+        case onePointFiveBillionThreshold...: return .onePointFiveBillion
         case billionThreshold...: return .billion
         default: return .none
         }
@@ -638,7 +638,7 @@ struct UsageChartView: View {
             .frame(height: Self.gridHeight)
 
             // One quiet legend surface turns the scale, rewards, and account
-            // boundaries into a single visual system. The 10B reward remains
+            // boundaries into a single visual system. The 1.5B reward remains
             // deliberately undocumented as an easter egg.
             compactLegend
         }
